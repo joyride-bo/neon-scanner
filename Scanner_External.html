@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Neon Scanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<!-- ====================================================================
+     CONFIG — edit these two lines after deploying.
+     ==================================================================== -->
+<script>
+  // 1) Paste your Apps Script Web App /exec URL here:
+  const WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';
+
+  // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
+  const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
+</script>
+<style>
+  :root {
+    --bg: #0f1418;
+    --panel: #1a232b;
+    --accent: #2bb673;
+    --warn: #e0a019;
+    --error: #d04e3a;
+    --text: #f1f4f7;
+    --muted: #8a9aa6;
+    --border: #2a3640;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0;
+    background: var(--panel);
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 17px; flex: 1; }
+  .back {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-size: 14px;
+  }
+  main { padding: 16px; max-width: 600px; margin: 0 auto; }
+  .home-grid { display: grid; grid-template-columns: 1fr; gap: 14px; margin-top: 12px; }
+  .home-btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 18px;
+    font-size: 18px; font-weight: 600;
+    color: var(--text);
+    text-align: left;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .home-btn .icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: var(--accent); display: grid; place-items: center;
+    font-size: 22px;
+  }
+  .home-btn small {
+    display: block; color: var(--muted); font-weight: 400; font-size: 13px;
+    margin-top: 4px;
+  }
+  input, select, button, textarea { font: inherit; font-size: 16px; }
+  .field {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .field label {
+    display: block; color: var(--muted); font-size: 12px;
+    margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .field input, .field select {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+  }
+  button.primary {
+    background: var(--accent); color: white; border: none;
+    border-radius: 10px; padding: 14px 18px; font-weight: 600; width: 100%;
+  }
+  button.secondary {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 18px; font-weight: 500; width: 100%;
+  }
+  .row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .row > * { flex: 1; }
+  .scanner-box {
+    position: relative;
+    width: 100%;
+    background: #000;
+    border-radius: 10px;
+    overflow: hidden;
+    min-height: 60px;
+  }
+  .scanner-box video {
+    width: 100%;
+    display: block;
+    background: #000;
+  }
+  .scanner-box .reticle {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 220px; height: 160px;
+    border: 2px solid rgba(43, 182, 115, 0.9);
+    border-radius: 12px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.25);
+    pointer-events: none;
+  }
+  .status {
+    padding: 12px; border-radius: 10px; margin-top: 10px;
+    background: var(--panel); border: 1px solid var(--border);
+    font-size: 14px;
+    word-break: break-word;
+  }
+  .status.ok    { border-color: var(--accent); }
+  .status.warn  { border-color: var(--warn); }
+  .status.err   { border-color: var(--error); }
+  .scan-list {
+    margin-top: 12px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  .scan-list .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+  }
+  .scan-list .item:last-child { border-bottom: none; }
+  .scan-list .item .imei { flex: 1; }
+  .scan-list .empty { padding: 16px; color: var(--muted); text-align: center; font-size: 14px; }
+  .count-pill {
+    display: inline-block; background: var(--accent); color: white;
+    padding: 2px 10px; border-radius: 999px; font-size: 13px; margin-left: 8px;
+  }
+  .lookup-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-top: 10px; }
+  .lookup-card h3 { margin: 0 0 8px 0; font-size: 16px; }
+  .lookup-card .kv { display: flex; gap: 8px; padding: 4px 0; font-size: 14px; }
+  .lookup-card .kv .k { color: var(--muted); width: 100px; }
+  .footer-actions { margin-top: 14px; display: grid; gap: 10px; }
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; font-size: 14px; z-index: 100;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  input[type="file"].photo {
+    position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0;
+  }
+  .or-divider {
+    text-align: center; color: var(--muted); margin: 10px 0; font-size: 13px;
+  }
+  .manual-row { display: flex; gap: 6px; margin-top: 8px; }
+  .manual-row input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
+  .manual-row button { flex: 0 0 auto; background: var(--accent); color: white; border: none; border-radius: 6px; padding: 0 16px; font-weight: 600; }
+  .config-warning { background: var(--warn); color: #1a1a1a; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+
+  .counter-banner {
+    background: var(--accent); color: white;
+    border-radius: 14px; padding: 18px 16px;
+    text-align: center; margin-bottom: 12px;
+    box-shadow: 0 4px 18px rgba(43, 182, 115, 0.25);
+  }
+  .counter-banner .count-num { font-size: 44px; font-weight: 700; line-height: 1; }
+  .counter-banner .count-label { font-size: 14px; opacity: 0.9; margin-top: 4px; }
+  .counter-banner.warn { background: var(--warn); color: #1a1a1a; box-shadow: 0 4px 18px rgba(224,160,25,0.3); }
+  .counter-banner.done { background: #1f7a4d; }
+  .role-badge {
+    display: inline-block; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; color: var(--muted); margin-left: 8px;
+  }
+  .role-badge.rob { background: #4a3b1a; color: #ffd86b; border-color: #6b5a2a; }
+  .precount-big input {
+    font-size: 32px !important; text-align: center; padding: 14px !important;
+  }
+  .or-strong {
+    text-align: center; margin: 16px 0 12px; color: var(--muted);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  @media (max-width: 600px) { main { padding: 12px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="back" id="backBtn" style="display:none">&lsaquo; Back</button>
+  <h1 id="title">Neon Scanner</h1>
+</header>
+
+<main id="app"></main>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+// ===================================================
+//  External Neon Scanner — calls Apps Script via POST.
+//  Hosted on GitHub Pages / Netlify / Cloudflare Pages / etc.
+//  Camera works because the page is NOT inside the
+//  Apps Script iframe.
+// ===================================================
+
+// ---------- API helper ----------
+async function callApi(action, args) {
+  try {
+    const res = await fetch(WEB_APP_URL, {
+      method: 'POST',
+      // text/plain avoids CORS preflight; Apps Script parses
+      // postData.contents as the raw string regardless.
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ token: TOKEN, action, args: args || [] }),
+      redirect: 'follow',
+      mode: 'cors',
+    });
+    if (!res.ok) return { ok: false, message: 'HTTP ' + res.status };
+    return await res.json();
+  } catch (e) {
+    return { ok: false, message: 'Network: ' + (e.message || e) };
+  }
+}
+
+// ---------- Audio + haptic feedback ----------
+let audioCtx;
+function beep(freq=900, dur=80) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.value = 0.18;
+    o.start();
+    setTimeout(() => { o.stop(); }, dur);
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(40);
+}
+function buzz() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = 'square'; o.frequency.value = 220;
+    g.gain.value = 0.18;
+    o.start();
+    setTimeout(() => { o.stop(); }, 220);
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+}
+
+function toast(msg, ms=1800) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.display = 'none'; }, ms);
+}
+
+// ---------- App state ----------
+const app = document.getElementById('app');
+const titleEl = document.getElementById('title');
+const backBtn = document.getElementById('backBtn');
+
+let videoStream = null;
+let scanIntervalId = null;
+let detector = null;
+let lastScan = '';
+let lastScanTime = 0;
+let currentScanCallback = null;
+
+// New state for v2: role + per-session expected/current counts
+let currentRole = '';       // 'toronto' | 'rob'
+let expectedCount = 0;      // user-entered target before a scan session
+let currentCount = 0;       // running count for current scan session
+let reconCompany = '';      // company name when using the type-in shortcut
+let pendingFlow = '';       // 'receive' | 'ship' — what comes after precount
+
+function stopScanner() {
+  if (scanIntervalId) { clearInterval(scanIntervalId); scanIntervalId = null; }
+  if (videoStream) {
+    videoStream.getTracks().forEach(t => t.stop());
+    videoStream = null;
+  }
+}
+
+function navigate(view, ...args) {
+  stopScanner();
+  backBtn.style.display = (view === 'home' || view === 'rolepicker') ? 'none' : 'inline-block';
+  if (view === 'rolepicker')  renderRolePicker();
+  if (view === 'home')        renderHome();
+  if (view === 'precount')    renderPrecount(args[0], args[1]);
+  if (view === 'receive')     renderReceive();
+  if (view === 'ship')        renderShipPicker();
+  if (view === 'shipScan')    renderShipScan(args[0]);
+  if (view === 'lookup')      renderLookup();
+  if (view === 'newShipment') renderNewShipment();
+}
+backBtn.onclick = () => navigate('home');
+
+// ---------- ROLE PICKER ----------
+function renderRolePicker() {
+  titleEl.textContent = 'Neon Scanner';
+  app.innerHTML = `
+    <div style="text-align:center; padding: 10px 0 20px; color: var(--muted)">
+      Who's using this scanner?
+    </div>
+    <div class="home-grid">
+      <button class="home-btn" onclick="pickRole('toronto')">
+        <span class="icon">&#x1F3E2;</span>
+        <span>Toronto Office
+          <small>Full access — receive, ship, lookup, create shipments</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="pickRole('rob')" style="border-color:#6b5a2a">
+        <span class="icon" style="background:#d6a83a">&#x1F4E6;</span>
+        <span>Rob
+          <small>Receive units, ship to open shipments only</small>
+        </span>
+      </button>
+    </div>
+  `;
+}
+function pickRole(role) {
+  currentRole = role;
+  navigate('home');
+}
+
+// ---------- PRE-COUNT PROMPT ----------
+// flow: 'receive' or 'ship'
+// extra: for 'ship', the Request ID (or null if using company-name shortcut later)
+function renderPrecount(flow, extra) {
+  pendingFlow = flow;
+  expectedCount = 0;
+  currentCount = 0;
+  titleEl.textContent = flow === 'receive' ? 'Receive — How many?' : 'Ship — How many?';
+  const subtitle = flow === 'receive'
+    ? 'Roughly how many units are you about to scan in?'
+    : 'How many units are you about to scan for this shipment?';
+  app.innerHTML = `
+    <div class="field precount-big">
+      <label>${subtitle}</label>
+      <input id="expCount" type="number" min="1" inputmode="numeric" autofocus />
+    </div>
+    <button class="primary" id="precountGo">Start scanning</button>
+    <button class="secondary" style="margin-top:10px" onclick="skipPrecount(${JSON.stringify(extra||'')})">Skip — I don't know yet</button>
+  `;
+  document.getElementById('expCount').focus();
+  document.getElementById('precountGo').onclick = () => {
+    const n = parseInt(document.getElementById('expCount').value, 10);
+    if (!n || n < 1) { toast('Enter a number'); return; }
+    expectedCount = n;
+    proceedAfterPrecount(extra);
+  };
+  document.getElementById('expCount').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('precountGo').click();
+  });
+}
+function skipPrecount(extra) {
+  expectedCount = 0;
+  proceedAfterPrecount(extra);
+}
+async function proceedAfterPrecount(extra) {
+  if (pendingFlow === 'receive') {
+    renderReceiveScan();
+    return;
+  }
+  if (pendingFlow === 'ship') {
+    if (extra && extra.startsWith && extra.startsWith('__RECON__:')) {
+      // Company-name shortcut path — create a recon shipment first
+      const company = extra.slice('__RECON__:'.length);
+      const r = await callApi('createReconShipment', [company, expectedCount || null]);
+      if (!r.ok) { toast(r.message || 'Failed'); navigate('ship'); return; }
+      toast('Recon shipment ' + r.requestId);
+      navigate('shipScan', r.requestId);
+      return;
+    }
+    navigate('shipScan', extra);
+  }
+}
+
+function counterBannerHTML() {
+  const tgt = expectedCount;
+  const cur = currentCount;
+  let cls = '';
+  let label;
+  if (tgt > 0) {
+    if (cur > tgt) cls = 'warn';
+    else if (cur === tgt) cls = 'done';
+    label = `${cur} of ${tgt} scanned`;
+  } else {
+    label = `${cur} scanned`;
+  }
+  return `<div class="counter-banner ${cls}" id="bigCounter">
+    <div class="count-num" id="bigCounterNum">${cur}${tgt > 0 ? ' / ' + tgt : ''}</div>
+    <div class="count-label" id="bigCounterLabel">${label}</div>
+  </div>`;
+}
+function refreshCounter() {
+  const banner = document.getElementById('bigCounter');
+  if (!banner) return;
+  const tgt = expectedCount;
+  const cur = currentCount;
+  let cls = 'counter-banner';
+  let label;
+  if (tgt > 0) {
+    if (cur > tgt) cls += ' warn';
+    else if (cur === tgt) cls += ' done';
+    label = `${cur} of ${tgt} scanned`;
+  } else {
+    label = `${cur} scanned`;
+  }
+  banner.className = cls;
+  document.getElementById('bigCounterNum').textContent = cur + (tgt > 0 ? ' / ' + tgt : '');
+  document.getElementById('bigCounterLabel').textContent = label;
+}
+
+// ---------- HOME ----------
+function renderHome() {
+  let warning = '';
+  if (WEB_APP_URL === 'PASTE_YOUR_EXEC_URL_HERE') {
+    warning = '<div class="config-warning"><b>Setup not finished:</b> edit the WEB_APP_URL near the top of this HTML file before scanning.</div>';
+  }
+  const roleLabel = currentRole === 'rob' ? 'Rob' : 'Toronto Office';
+  const roleClass = currentRole === 'rob' ? 'role-badge rob' : 'role-badge';
+  titleEl.innerHTML = 'Neon Scanner <span class="' + roleClass + '">' + roleLabel + '</span>';
+
+  // Rob: Receive Units + Ship Units only
+  if (currentRole === 'rob') {
+    app.innerHTML = warning + `
+      <div class="home-grid">
+        <button class="home-btn" onclick="navigate('precount','receive')">
+          <span class="icon">&#x1F4E5;</span>
+          <span>Receive Units
+            <small>Scan units arriving to Rob. New units get batch # R-YYMMDD.</small>
+          </span>
+        </button>
+        <button class="home-btn" onclick="navigate('ship')">
+          <span class="icon">&#x1F4E6;</span>
+          <span>Ship Units
+            <small>Pick an open shipment, or type a company name</small>
+          </span>
+        </button>
+      </div>
+      <div style="margin-top:20px; text-align:center">
+        <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
+      </div>
+    `;
+    return;
+  }
+
+  // Toronto Office: full menu
+  app.innerHTML = warning + `
+    <div class="home-grid">
+      <button class="home-btn" onclick="navigate('receive')">
+        <span class="icon">&#x1F4E5;</span>
+        <span>Receive
+          <small>Scan new units in from manufacturer</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="navigate('ship')">
+        <span class="icon">&#x1F4E6;</span>
+        <span>Ship
+          <small>Link IMEIs to a Request ID as you pack</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="navigate('lookup')">
+        <span class="icon">&#x1F50D;</span>
+        <span>Lookup
+          <small>Scan a unit to see its history</small>
+        </span>
+      </button>
+    </div>
+    <div style="margin-top:20px; text-align:center">
+      <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
+    </div>
+  `;
+}
+
+// ---------- Shared scanner UI ----------
+function renderScannerBlock(parentId, onCodeFn) {
+  currentScanCallback = onCodeFn;
+  const hasBarcodeDetector = ('BarcodeDetector' in window);
+  document.getElementById(parentId).innerHTML = `
+    <div class="field" style="padding:8px">
+      <div class="scanner-box" id="scannerBox">
+        <video id="video" playsinline muted autoplay></video>
+        <div class="reticle" id="reticle" style="display:none"></div>
+      </div>
+      <button class="primary" id="startCamBtn" style="margin-top:10px">
+        ${hasBarcodeDetector ? 'Start camera' : 'Live camera not supported here'}
+      </button>
+      <div class="or-divider">— or —</div>
+      <button class="secondary" id="photoBtn">Take photo with camera app</button>
+      <input type="file" class="photo" id="photoInput" accept="image/*" capture="environment">
+      <div class="or-divider">— or —</div>
+      <div class="manual-row">
+        <input id="manualImei" placeholder="Type/paste IMEI" inputmode="numeric" autocomplete="off">
+        <button id="manualSubmit">Add</button>
+      </div>
+    </div>
+    <div class="status ok" id="status">Tap <b>Start camera</b>, or take a photo, or type an IMEI.</div>
+  `;
+  document.getElementById('startCamBtn').disabled = !hasBarcodeDetector;
+  document.getElementById('startCamBtn').onclick = () => startLiveCamera();
+  document.getElementById('photoBtn').onclick = () => document.getElementById('photoInput').click();
+  document.getElementById('photoInput').onchange = (e) => handlePhotoFile(e.target.files && e.target.files[0]);
+  document.getElementById('manualSubmit').onclick = () => {
+    const v = document.getElementById('manualImei').value.trim();
+    if (v && currentScanCallback) {
+      currentScanCallback(v);
+      document.getElementById('manualImei').value = '';
+    }
+  };
+  document.getElementById('manualImei').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('manualSubmit').click();
+  });
+  document.getElementById('video').style.display = 'none';
+  document.getElementById('scannerBox').style.minHeight = '0';
+}
+
+async function startLiveCamera() {
+  const btn = document.getElementById('startCamBtn');
+  const status = document.getElementById('status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+  if (status) { status.className = 'status ok'; status.textContent = 'Requesting camera…'; }
+
+  if (!('BarcodeDetector' in window)) {
+    showCamError('Browser missing BarcodeDetector. Use photo capture or type IMEI manually.');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showCamError('Browser does not expose camera access here.');
+    return;
+  }
+
+  try {
+    detector = new BarcodeDetector({ formats: ['qr_code'] });
+  } catch (e) {
+    showCamError('BarcodeDetector init failed: ' + e);
+    return;
+  }
+
+  try {
+    videoStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false,
+    });
+  } catch (e) {
+    showCamError('Camera denied or unavailable: ' + (e && e.message ? e.message : e));
+    return;
+  }
+
+  const video = document.getElementById('video');
+  if (!video) return;
+  video.srcObject = videoStream;
+  video.style.display = 'block';
+  document.getElementById('reticle').style.display = 'block';
+  try { await video.play(); } catch (e) {}
+
+  if (btn) btn.style.display = 'none';
+  if (status) { status.className = 'status ok'; status.innerHTML = 'Camera live. Point at a QR code. <span class="count-pill" id="countPill">0 scanned</span>'; }
+
+  scanIntervalId = setInterval(async () => {
+    try {
+      const codes = await detector.detect(video);
+      if (codes && codes.length) {
+        const text = codes[0].rawValue;
+        if (text && currentScanCallback) currentScanCallback(text);
+      }
+    } catch (e) {}
+  }, 250);
+}
+
+function showCamError(msg) {
+  stopScanner();
+  const btn = document.getElementById('startCamBtn');
+  if (btn) { btn.disabled = false; btn.style.display = 'block'; btn.textContent = 'Try camera again'; }
+  const status = document.getElementById('status');
+  if (status) {
+    status.className = 'status err';
+    status.innerHTML = msg + '<br><span style="color:var(--muted);font-size:12px">Use the photo button or type an IMEI manually below.</span>';
+  }
+}
+
+async function handlePhotoFile(file) {
+  if (!file) return;
+  const status = document.getElementById('status');
+  if (status) { status.className = 'status ok'; status.textContent = 'Decoding photo…'; }
+  try {
+    const bitmap = await createImageBitmap(file);
+    if (!('BarcodeDetector' in window)) {
+      if (status) {
+        status.className = 'status warn';
+        status.innerHTML = 'This browser cannot decode QR images. Type the IMEI manually below.';
+      }
+      return;
+    }
+    const det = new BarcodeDetector({ formats: ['qr_code'] });
+    const codes = await det.detect(bitmap);
+    if (codes && codes.length && codes[0].rawValue && currentScanCallback) {
+      currentScanCallback(codes[0].rawValue);
+    } else {
+      if (status) { status.className = 'status warn'; status.textContent = 'No QR code found in that photo.'; }
+      buzz();
+    }
+  } catch (e) {
+    if (status) { status.className = 'status err'; status.textContent = 'Photo decode failed: ' + e; }
+  }
+  const el = document.getElementById('photoInput');
+  if (el) el.value = '';
+}
+
+// ---------- RECEIVE ----------
+const recentReceives = [];
+
+// Toronto entry point: ask batch # first, then precount.
+// Rob entry: navigate('precount','receive') directly from home — no batch input.
+function renderReceive() {
+  titleEl.textContent = 'Receive Devices';
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const defaultBatch = String(d.getFullYear()).slice(2) + pad(d.getMonth()+1) + pad(d.getDate());
+  app.innerHTML = `
+    <div class="field">
+      <label>Batch # (YYMMDD)</label>
+      <input id="batch" value="${defaultBatch}" autocomplete="off" />
+    </div>
+    <button class="primary" id="receiveContinue">Continue</button>
+  `;
+  document.getElementById('receiveContinue').onclick = () => {
+    const b = document.getElementById('batch').value.trim();
+    if (!b) { toast('Batch # required'); return; }
+    window._torontoBatch = b;
+    navigate('precount', 'receive');
+  };
+}
+
+// Actual scan UI for the receive flow (both roles land here after precount).
+function renderReceiveScan() {
+  const isRob = currentRole === 'rob';
+  titleEl.textContent = isRob ? 'Receive (Rob)' : 'Receive Devices';
+  app.innerHTML = `
+    ${counterBannerHTML()}
+    <div id="scanArea"></div>
+    <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
+    <div class="footer-actions">
+      <button class="secondary" onclick="navigate('home')">Done</button>
+    </div>
+  `;
+  recentReceives.length = 0;
+  renderScannerBlock('scanArea', onReceiveScan);
+}
+
+async function onReceiveScan(text) {
+  const now = Date.now();
+  if (text === lastScan && now - lastScanTime < 2000) return;
+  lastScan = text; lastScanTime = now;
+  const batch = currentRole === 'rob' ? null : (window._torontoBatch || '');
+  const r = await callApi('recordReceived', [batch, text, currentRole]);
+  if (r.ok) {
+    beep(r.action === 'location-updated' ? 700 : 900);
+    currentCount += 1;
+    refreshCounter();
+    recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location → Rob' : 'added' });
+    renderRecentReceives();
+    setStatus('ok', r.message);
+  } else if (r.duplicate) {
+    beep(500); setStatus('warn', r.message);
+  } else {
+    buzz(); setStatus('err', r.message);
+  }
+}
+function renderRecentReceives() {
+  const list = document.getElementById('list');
+  if (!recentReceives.length) {
+    list.innerHTML = '<div class="empty">No scans yet.</div>';
+    return;
+  }
+  list.innerHTML = recentReceives.slice(0, 50).map(r => `
+    <div class="item">
+      <span class="imei">${r.imei}</span>
+      <span style="color:var(--muted);font-size:12px">${r.note || 'added'}</span>
+    </div>
+  `).join('');
+}
+
+// ---------- SHIP — picker ----------
+async function renderShipPicker() {
+  titleEl.textContent = 'Pick a Shipment';
+  app.innerHTML = `<div class="status ok">Loading open shipments…</div>`;
+  const r = await callApi('getOpenShipments', []);
+  if (!r || !Array.isArray(r)) {
+    if (r && r.message) { app.innerHTML = `<div class="status err">${r.message}</div>`; return; }
+    app.innerHTML = `<div class="status err">Failed to load shipments</div>`;
+    return;
+  }
+  let opts = '<option value="">-- pick a Request ID (open only) --</option>';
+  r.forEach(s => {
+    const remaining = s.qty > 0 ? Math.max(0, s.qty - (s.itemsLinked || 0)) : '?';
+    opts += `<option value="${s.requestId}">${s.requestId}  •  ${s.company}  •  ${remaining} left of ${s.qty || '?'}</option>`;
+  });
+  const createNewBtn = currentRole === 'rob' ? '' :
+    `<button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>`;
+
+  app.innerHTML = `
+    <div class="field">
+      <label>Open Shipments (${r.length})</label>
+      <select id="reqPick">${opts}</select>
+    </div>
+    <button class="primary" onclick="goShip()">Start scanning</button>
+
+    <div class="or-strong">— or, type a company name —</div>
+    <div class="field">
+      <label>Company name (creates a "Needs Reconciliation" shipment)</label>
+      <input id="reconCompany" placeholder="e.g. Acme Co" autocomplete="off" />
+    </div>
+    <button class="primary" onclick="goShipRecon()">Use company name &amp; start scanning</button>
+
+    ${createNewBtn ? '<div class="or-divider">— or —</div>' + createNewBtn : ''}
+  `;
+}
+function goShip() {
+  const v = document.getElementById('reqPick').value;
+  if (!v) { toast('Pick a Request ID'); return; }
+  navigate('precount', 'ship', v);
+}
+function goShipRecon() {
+  const v = (document.getElementById('reconCompany').value || '').trim();
+  if (!v) { toast('Type a company name'); return; }
+  // Encode the company in the extra arg; precount → proceedAfterPrecount will create the shipment.
+  navigate('precount', 'ship', '__RECON__:' + v);
+}
+
+// ---------- SHIP — new shipment ----------
+async function renderNewShipment() {
+  titleEl.textContent = 'New Shipment';
+  app.innerHTML = `<div class="status ok">Loading customers…</div>`;
+  const list = await callApi('getCustomers', []);
+  if (!Array.isArray(list)) {
+    app.innerHTML = `<div class="status err">${(list && list.message) || 'Failed to load customers'}</div>`;
+    return;
+  }
+  let opts = '<option value="">-- pick a customer --</option>';
+  list.forEach(c => { opts += `<option value="${c.code}">${c.name}  (${c.code})</option>`; });
+  app.innerHTML = `
+    <div class="field"><label>Customer</label><select id="cust">${opts}</select></div>
+    <div class="field"><label>Reason</label>
+      <select id="reason"><option>New</option><option>Replacement</option><option>Return</option></select>
+    </div>
+    <div class="field"><label>Quantity Requested</label>
+      <input id="qty" type="number" min="1" value="1" />
+    </div>
+    <button class="primary" onclick="createShipmentAndGo()">Create &amp; start scanning</button>
+  `;
+}
+async function createShipmentAndGo() {
+  const code = document.getElementById('cust').value;
+  const reason = document.getElementById('reason').value;
+  const qty = document.getElementById('qty').value;
+  if (!code) { toast('Pick a customer'); return; }
+  const r = await callApi('createShipment', [code, parseInt(qty, 10) || null, reason]);
+  if (r.ok) {
+    toast('Created ' + r.requestId);
+    navigate('shipScan', r.requestId);
+  } else {
+    toast(r.message || 'Failed');
+  }
+}
+
+// ---------- SHIP — scan ----------
+let currentRequestId = '';
+const shipScans = [];
+function renderShipScan(requestId) {
+  currentRequestId = requestId;
+  shipScans.length = 0;
+  // currentCount was set by precount; reset here so counter starts at 0.
+  currentCount = 0;
+  titleEl.textContent = 'Ship: ' + requestId;
+  app.innerHTML = `
+    ${counterBannerHTML()}
+    <div id="scanArea"></div>
+    <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
+    <div class="footer-actions">
+      <div class="row">
+        <button class="secondary" onclick="undoLast()">Undo last</button>
+        <button class="primary" onclick="finalize()">Finalize</button>
+      </div>
+    </div>
+  `;
+  renderScannerBlock('scanArea', onShipScan);
+}
+async function onShipScan(text) {
+  const now = Date.now();
+  if (text === lastScan && now - lastScanTime < 2000) return;
+  lastScan = text; lastScanTime = now;
+  const r = await callApi('recordShippedItem', [currentRequestId, text]);
+  if (r.ok) {
+    beep(r.warning ? 600 : 900);
+    currentCount = r.countSoFar || (currentCount + 1);
+    refreshCounter();
+    shipScans.unshift({ imei: r.imei, warn: r.warning });
+    setStatus(r.warning ? 'warn' : 'ok', r.message);
+    renderShipList();
+  } else if (r.duplicate) {
+    beep(500); setStatus('warn', r.message);
+  } else {
+    buzz(); setStatus('err', r.message);
+  }
+}
+function renderShipList() {
+  const list = document.getElementById('list');
+  if (!shipScans.length) { list.innerHTML = '<div class="empty">No scans yet.</div>'; return; }
+  list.innerHTML = shipScans.map(r => `
+    <div class="item">
+      <span class="imei">${r.imei}</span>
+      ${r.warn ? '<span style="color:var(--warn);font-size:12px">unknown</span>' : ''}
+    </div>
+  `).join('');
+}
+async function undoLast() {
+  const r = await callApi('undoLastScan', [currentRequestId]);
+  if (r.ok) {
+    toast(r.message);
+    if (shipScans.length) shipScans.shift();
+    currentCount = Math.max(0, currentCount - 1);
+    refreshCounter();
+    renderShipList();
+  } else {
+    toast(r.message);
+  }
+}
+async function finalize() {
+  if (!confirm('Finalize ' + currentRequestId + '? This sets Qty Shipped + Date Shipped.')) return;
+  const r = await callApi('finalizeShipment', [currentRequestId]);
+  if (r.ok) {
+    toast(r.message, 3000);
+    setTimeout(() => navigate('home'), 1200);
+  } else {
+    toast(r.message);
+  }
+}
+
+// ---------- LOOKUP ----------
+function renderLookup() {
+  titleEl.textContent = 'Lookup IMEI';
+  app.innerHTML = `<div id="scanArea"></div><div id="card"></div>`;
+  renderScannerBlock('scanArea', onLookupScan);
+}
+async function onLookupScan(text) {
+  const now = Date.now();
+  if (text === lastScan && now - lastScanTime < 2000) return;
+  lastScan = text; lastScanTime = now;
+  beep(800);
+  const r = await callApi('lookupImei', [text]);
+  const card = document.getElementById('card');
+  if (!r.ok) { card.innerHTML = '<div class="status err">'+r.message+'</div>'; return; }
+  let html = '<div class="lookup-card"><h3>'+r.imei+'</h3>';
+  if (r.device) {
+    html += `
+      <div class="kv"><span class="k">Batch</span><span>${r.device.batch || '—'}</span></div>
+      <div class="kv"><span class="k">Type</span><span>${r.device.type || '—'}</span></div>
+      <div class="kv"><span class="k">Status</span><span>${r.device.status || '—'}</span></div>
+      <div class="kv"><span class="k">Supplier</span><span>${r.device.supplier || '—'}</span></div>
+      <div class="kv"><span class="k">SIM</span><span>${r.device.sim || '—'}</span></div>
+    `;
+  } else {
+    html += '<div style="color:var(--warn)">Not found in Devices.</div>';
+  }
+  if (r.history && r.history.length) {
+    html += '<h3 style="margin-top:14px">Shipment history</h3>';
+    r.history.forEach(h => {
+      const t = h.scannedAt ? new Date(h.scannedAt).toLocaleDateString() : '';
+      html += `<div class="kv"><span class="k">${t}</span><span>${h.requestId}</span></div>`;
+    });
+  }
+  if (r.returns && r.returns.length) {
+    html += '<h3 style="margin-top:14px">Returns</h3>';
+    r.returns.forEach(rr => {
+      const t = rr.dateReceived ? new Date(rr.dateReceived).toLocaleDateString() : '';
+      html += `<div class="kv"><span class="k">${t}</span><span>${rr.status || ''}  •  ${rr.rmaResult || 'pending'}</span></div>`;
+    });
+  }
+  html += '</div>';
+  card.innerHTML = html;
+}
+
+// ---------- Status helper ----------
+function setStatus(kind, msg) {
+  const s = document.getElementById('status');
+  if (!s) return;
+  s.className = 'status ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : 'ok');
+  const cp = document.getElementById('countPill');
+  if (cp) {
+    s.innerHTML = msg + ' <span class="count-pill" id="countPill">'+cp.textContent+'</span>';
+  } else {
+    s.innerHTML = msg;
+  }
+}
+
+// ---------- Boot ----------
+renderRolePicker();
+</script>
+</body>
+</html>
