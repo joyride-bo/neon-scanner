@@ -9,7 +9,7 @@
      ==================================================================== -->
 <script>
   // 1) Paste your Apps Script Web App /exec URL here:
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyr8cYcAbZQgh93W50-BzmPHzF46X0ON36s7Z1BJNSCV4T8WSRfIeMJUhZzbYpxIxad/exec';
+  const WEB_APP_URL = 'https://joyride-bo.github.io/neon-scanner/';
 
   // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
   const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
@@ -165,6 +165,31 @@
   .manual-row input { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
   .manual-row button { flex: 0 0 auto; background: var(--accent); color: white; border: none; border-radius: 6px; padding: 0 16px; font-weight: 600; }
   .config-warning { background: var(--warn); color: #1a1a1a; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+
+  .counter-banner {
+    background: var(--accent); color: white;
+    border-radius: 14px; padding: 18px 16px;
+    text-align: center; margin-bottom: 12px;
+    box-shadow: 0 4px 18px rgba(43, 182, 115, 0.25);
+  }
+  .counter-banner .count-num { font-size: 44px; font-weight: 700; line-height: 1; }
+  .counter-banner .count-label { font-size: 14px; opacity: 0.9; margin-top: 4px; }
+  .counter-banner.warn { background: var(--warn); color: #1a1a1a; box-shadow: 0 4px 18px rgba(224,160,25,0.3); }
+  .counter-banner.done { background: #1f7a4d; }
+  .role-badge {
+    display: inline-block; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; color: var(--muted); margin-left: 8px;
+  }
+  .role-badge.rob { background: #4a3b1a; color: #ffd86b; border-color: #6b5a2a; }
+  .precount-big input {
+    font-size: 32px !important; text-align: center; padding: 14px !important;
+  }
+  .or-strong {
+    text-align: center; margin: 16px 0 12px; color: var(--muted);
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  }
+
   @media (max-width: 600px) { main { padding: 12px; } }
 </style>
 </head>
@@ -255,6 +280,13 @@ let lastScan = '';
 let lastScanTime = 0;
 let currentScanCallback = null;
 
+// New state for v2: role + per-session expected/current counts
+let currentRole = '';       // 'toronto' | 'rob'
+let expectedCount = 0;      // user-entered target before a scan session
+let currentCount = 0;       // running count for current scan session
+let reconCompany = '';      // company name when using the type-in shortcut
+let pendingFlow = '';       // 'receive' | 'ship' — what comes after precount
+
 function stopScanner() {
   if (scanIntervalId) { clearInterval(scanIntervalId); scanIntervalId = null; }
   if (videoStream) {
@@ -265,23 +297,170 @@ function stopScanner() {
 
 function navigate(view, ...args) {
   stopScanner();
-  backBtn.style.display = view === 'home' ? 'none' : 'inline-block';
-  if (view === 'home')      renderHome();
-  if (view === 'receive')   renderReceive();
-  if (view === 'ship')      renderShipPicker();
-  if (view === 'shipScan')  renderShipScan(args[0]);
-  if (view === 'lookup')    renderLookup();
+  backBtn.style.display = (view === 'home' || view === 'rolepicker') ? 'none' : 'inline-block';
+  if (view === 'rolepicker')  renderRolePicker();
+  if (view === 'home')        renderHome();
+  if (view === 'precount')    renderPrecount(args[0], args[1]);
+  if (view === 'receive')     renderReceive();
+  if (view === 'ship')        renderShipPicker();
+  if (view === 'shipScan')    renderShipScan(args[0]);
+  if (view === 'lookup')      renderLookup();
   if (view === 'newShipment') renderNewShipment();
 }
 backBtn.onclick = () => navigate('home');
 
+// ---------- ROLE PICKER ----------
+function renderRolePicker() {
+  titleEl.textContent = 'Neon Scanner';
+  app.innerHTML = `
+    <div style="text-align:center; padding: 10px 0 20px; color: var(--muted)">
+      Who's using this scanner?
+    </div>
+    <div class="home-grid">
+      <button class="home-btn" onclick="pickRole('toronto')">
+        <span class="icon">&#x1F3E2;</span>
+        <span>Toronto Office
+          <small>Full access — receive, ship, lookup, create shipments</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="pickRole('rob')" style="border-color:#6b5a2a">
+        <span class="icon" style="background:#d6a83a">&#x1F4E6;</span>
+        <span>Rob
+          <small>Receive units, ship to open shipments only</small>
+        </span>
+      </button>
+    </div>
+  `;
+}
+function pickRole(role) {
+  currentRole = role;
+  navigate('home');
+}
+
+// ---------- PRE-COUNT PROMPT ----------
+// flow: 'receive' or 'ship'
+// extra: for 'ship', the Request ID (or null if using company-name shortcut later)
+function renderPrecount(flow, extra) {
+  pendingFlow = flow;
+  expectedCount = 0;
+  currentCount = 0;
+  titleEl.textContent = flow === 'receive' ? 'Receive — How many?' : 'Ship — How many?';
+  const subtitle = flow === 'receive'
+    ? 'Roughly how many units are you about to scan in?'
+    : 'How many units are you about to scan for this shipment?';
+  app.innerHTML = `
+    <div class="field precount-big">
+      <label>${subtitle}</label>
+      <input id="expCount" type="number" min="1" inputmode="numeric" autofocus />
+    </div>
+    <button class="primary" id="precountGo">Start scanning</button>
+    <button class="secondary" style="margin-top:10px" onclick="skipPrecount(${JSON.stringify(extra||'')})">Skip — I don't know yet</button>
+  `;
+  document.getElementById('expCount').focus();
+  document.getElementById('precountGo').onclick = () => {
+    const n = parseInt(document.getElementById('expCount').value, 10);
+    if (!n || n < 1) { toast('Enter a number'); return; }
+    expectedCount = n;
+    proceedAfterPrecount(extra);
+  };
+  document.getElementById('expCount').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('precountGo').click();
+  });
+}
+function skipPrecount(extra) {
+  expectedCount = 0;
+  proceedAfterPrecount(extra);
+}
+async function proceedAfterPrecount(extra) {
+  if (pendingFlow === 'receive') {
+    renderReceiveScan();
+    return;
+  }
+  if (pendingFlow === 'ship') {
+    if (extra && extra.startsWith && extra.startsWith('__RECON__:')) {
+      // Company-name shortcut path — create a recon shipment first
+      const company = extra.slice('__RECON__:'.length);
+      const r = await callApi('createReconShipment', [company, expectedCount || null]);
+      if (!r.ok) { toast(r.message || 'Failed'); navigate('ship'); return; }
+      toast('Recon shipment ' + r.requestId);
+      navigate('shipScan', r.requestId);
+      return;
+    }
+    navigate('shipScan', extra);
+  }
+}
+
+function counterBannerHTML() {
+  const tgt = expectedCount;
+  const cur = currentCount;
+  let cls = '';
+  let label;
+  if (tgt > 0) {
+    if (cur > tgt) cls = 'warn';
+    else if (cur === tgt) cls = 'done';
+    label = `${cur} of ${tgt} scanned`;
+  } else {
+    label = `${cur} scanned`;
+  }
+  return `<div class="counter-banner ${cls}" id="bigCounter">
+    <div class="count-num" id="bigCounterNum">${cur}${tgt > 0 ? ' / ' + tgt : ''}</div>
+    <div class="count-label" id="bigCounterLabel">${label}</div>
+  </div>`;
+}
+function refreshCounter() {
+  const banner = document.getElementById('bigCounter');
+  if (!banner) return;
+  const tgt = expectedCount;
+  const cur = currentCount;
+  let cls = 'counter-banner';
+  let label;
+  if (tgt > 0) {
+    if (cur > tgt) cls += ' warn';
+    else if (cur === tgt) cls += ' done';
+    label = `${cur} of ${tgt} scanned`;
+  } else {
+    label = `${cur} scanned`;
+  }
+  banner.className = cls;
+  document.getElementById('bigCounterNum').textContent = cur + (tgt > 0 ? ' / ' + tgt : '');
+  document.getElementById('bigCounterLabel').textContent = label;
+}
+
 // ---------- HOME ----------
 function renderHome() {
-  titleEl.textContent = 'Neon Scanner';
   let warning = '';
   if (WEB_APP_URL === 'PASTE_YOUR_EXEC_URL_HERE') {
     warning = '<div class="config-warning"><b>Setup not finished:</b> edit the WEB_APP_URL near the top of this HTML file before scanning.</div>';
   }
+  const roleLabel = currentRole === 'rob' ? 'Rob' : 'Toronto Office';
+  const roleClass = currentRole === 'rob' ? 'role-badge rob' : 'role-badge';
+  titleEl.innerHTML = 'Neon Scanner <span class="' + roleClass + '">' + roleLabel + '</span>';
+
+  // Rob: Receive Units + Ship Units only
+  if (currentRole === 'rob') {
+    app.innerHTML = warning + `
+      <div class="home-grid">
+        <button class="home-btn" onclick="navigate('precount','receive')">
+          <span class="icon">&#x1F4E5;</span>
+          <span>Receive Units
+            <small>Scan units arriving to Rob. New units get batch # R-YYMMDD.</small>
+          </span>
+        </button>
+        <button class="home-btn" onclick="navigate('ship')">
+          <span class="icon">&#x1F4E6;</span>
+          <span>Ship Units
+            <small>Pick an open shipment, or type a company name</small>
+          </span>
+        </button>
+      </div>
+      <div style="margin-top:20px; text-align:center">
+        <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
+      </div>
+    `;
+    return;
+  }
+
+  // Toronto Office: full menu
   app.innerHTML = warning + `
     <div class="home-grid">
       <button class="home-btn" onclick="navigate('receive')">
@@ -302,6 +481,9 @@ function renderHome() {
           <small>Scan a unit to see its history</small>
         </span>
       </button>
+    </div>
+    <div style="margin-top:20px; text-align:center">
+      <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
     </div>
   `;
 }
@@ -442,6 +624,9 @@ async function handlePhotoFile(file) {
 
 // ---------- RECEIVE ----------
 const recentReceives = [];
+
+// Toronto entry point: ask batch # first, then precount.
+// Rob entry: navigate('precount','receive') directly from home — no batch input.
 function renderReceive() {
   titleEl.textContent = 'Receive Devices';
   const d = new Date();
@@ -452,24 +637,43 @@ function renderReceive() {
       <label>Batch # (YYMMDD)</label>
       <input id="batch" value="${defaultBatch}" autocomplete="off" />
     </div>
+    <button class="primary" id="receiveContinue">Continue</button>
+  `;
+  document.getElementById('receiveContinue').onclick = () => {
+    const b = document.getElementById('batch').value.trim();
+    if (!b) { toast('Batch # required'); return; }
+    window._torontoBatch = b;
+    navigate('precount', 'receive');
+  };
+}
+
+// Actual scan UI for the receive flow (both roles land here after precount).
+function renderReceiveScan() {
+  const isRob = currentRole === 'rob';
+  titleEl.textContent = isRob ? 'Receive (Rob)' : 'Receive Devices';
+  app.innerHTML = `
+    ${counterBannerHTML()}
     <div id="scanArea"></div>
     <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
     <div class="footer-actions">
       <button class="secondary" onclick="navigate('home')">Done</button>
     </div>
   `;
-  renderScannerBlock('scanArea', onReceiveScan);
   recentReceives.length = 0;
+  renderScannerBlock('scanArea', onReceiveScan);
 }
+
 async function onReceiveScan(text) {
   const now = Date.now();
   if (text === lastScan && now - lastScanTime < 2000) return;
   lastScan = text; lastScanTime = now;
-  const batch = document.getElementById('batch').value.trim();
-  const r = await callApi('recordReceived', [batch, text]);
+  const batch = currentRole === 'rob' ? null : (window._torontoBatch || '');
+  const r = await callApi('recordReceived', [batch, text, currentRole]);
   if (r.ok) {
-    beep(900);
-    recentReceives.unshift({ imei: r.imei });
+    beep(r.action === 'location-updated' ? 700 : 900);
+    currentCount += 1;
+    refreshCounter();
+    recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location → Rob' : 'added' });
     renderRecentReceives();
     setStatus('ok', r.message);
   } else if (r.duplicate) {
@@ -487,7 +691,7 @@ function renderRecentReceives() {
   list.innerHTML = recentReceives.slice(0, 50).map(r => `
     <div class="item">
       <span class="imei">${r.imei}</span>
-      <span style="color:var(--muted);font-size:12px">added</span>
+      <span style="color:var(--muted);font-size:12px">${r.note || 'added'}</span>
     </div>
   `).join('');
 }
@@ -502,24 +706,41 @@ async function renderShipPicker() {
     app.innerHTML = `<div class="status err">Failed to load shipments</div>`;
     return;
   }
-  let opts = '<option value="">-- pick a Request ID --</option>';
+  let opts = '<option value="">-- pick a Request ID (open only) --</option>';
   r.forEach(s => {
-    opts += `<option value="${s.requestId}">${s.requestId}  •  ${s.company}  •  ${s.reason}  •  qty ${s.qty || '?'}  •  ${s.status || 'TBD'}</option>`;
+    const remaining = s.qty > 0 ? Math.max(0, s.qty - (s.itemsLinked || 0)) : '?';
+    opts += `<option value="${s.requestId}">${s.requestId}  •  ${s.company}  •  ${remaining} left of ${s.qty || '?'}</option>`;
   });
+  const createNewBtn = currentRole === 'rob' ? '' :
+    `<button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>`;
+
   app.innerHTML = `
     <div class="field">
-      <label>Open Shipments</label>
+      <label>Open Shipments (${r.length})</label>
       <select id="reqPick">${opts}</select>
     </div>
     <button class="primary" onclick="goShip()">Start scanning</button>
-    <div class="or-divider">— or —</div>
-    <button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>
+
+    <div class="or-strong">— or, type a company name —</div>
+    <div class="field">
+      <label>Company name (creates a "Needs Reconciliation" shipment)</label>
+      <input id="reconCompany" placeholder="e.g. Acme Co" autocomplete="off" />
+    </div>
+    <button class="primary" onclick="goShipRecon()">Use company name &amp; start scanning</button>
+
+    ${createNewBtn ? '<div class="or-divider">— or —</div>' + createNewBtn : ''}
   `;
 }
 function goShip() {
   const v = document.getElementById('reqPick').value;
   if (!v) { toast('Pick a Request ID'); return; }
-  navigate('shipScan', v);
+  navigate('precount', 'ship', v);
+}
+function goShipRecon() {
+  const v = (document.getElementById('reconCompany').value || '').trim();
+  if (!v) { toast('Type a company name'); return; }
+  // Encode the company in the extra arg; precount → proceedAfterPrecount will create the shipment.
+  navigate('precount', 'ship', '__RECON__:' + v);
 }
 
 // ---------- SHIP — new shipment ----------
@@ -564,8 +785,11 @@ const shipScans = [];
 function renderShipScan(requestId) {
   currentRequestId = requestId;
   shipScans.length = 0;
+  // currentCount was set by precount; reset here so counter starts at 0.
+  currentCount = 0;
   titleEl.textContent = 'Ship: ' + requestId;
   app.innerHTML = `
+    ${counterBannerHTML()}
     <div id="scanArea"></div>
     <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
     <div class="footer-actions">
@@ -584,9 +808,9 @@ async function onShipScan(text) {
   const r = await callApi('recordShippedItem', [currentRequestId, text]);
   if (r.ok) {
     beep(r.warning ? 600 : 900);
+    currentCount = r.countSoFar || (currentCount + 1);
+    refreshCounter();
     shipScans.unshift({ imei: r.imei, warn: r.warning });
-    const cp = document.getElementById('countPill');
-    if (cp) cp.textContent = r.countSoFar + ' scanned';
     setStatus(r.warning ? 'warn' : 'ok', r.message);
     renderShipList();
   } else if (r.duplicate) {
@@ -610,12 +834,9 @@ async function undoLast() {
   if (r.ok) {
     toast(r.message);
     if (shipScans.length) shipScans.shift();
+    currentCount = Math.max(0, currentCount - 1);
+    refreshCounter();
     renderShipList();
-    const cp = document.getElementById('countPill');
-    if (cp) {
-      const n = parseInt(cp.textContent, 10) || 0;
-      cp.textContent = Math.max(0, n - 1) + ' scanned';
-    }
   } else {
     toast(r.message);
   }
@@ -689,7 +910,7 @@ function setStatus(kind, msg) {
 }
 
 // ---------- Boot ----------
-renderHome();
+renderRolePicker();
 </script>
 </body>
 </html>
