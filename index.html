@@ -9,7 +9,7 @@
      ==================================================================== -->
 <script>
   // 1) Paste your Apps Script Web App /exec URL here:
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyr8cYcAbZQgh93W50-BzmPHzF46X0ON36s7Z1BJNSCV4T8WSRfIeMJUhZzbYpxIxad/exec';
+  const WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';
 
   // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
   const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
@@ -769,6 +769,14 @@ async function renderNewShipment() {
     <div class="field"><label>Quantity Requested</label>
       <input id="qty" type="number" min="1" value="1" />
     </div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>2-pin Cables</label>
+        <input id="cab2" type="number" min="0" value="0" />
+      </div>
+      <div class="field" style="flex:1"><label>6-pin Cables</label>
+        <input id="cab6" type="number" min="0" value="0" />
+      </div>
+    </div>
     <button class="primary" onclick="createShipmentAndGo()">Create &amp; start scanning</button>
   `;
 }
@@ -776,8 +784,10 @@ async function createShipmentAndGo() {
   const code = document.getElementById('cust').value;
   const reason = document.getElementById('reason').value;
   const qty = document.getElementById('qty').value;
+  const cab2 = document.getElementById('cab2').value;
+  const cab6 = document.getElementById('cab6').value;
   if (!code) { toast('Pick a customer'); return; }
-  const r = await callApi('createShipment', [code, parseInt(qty, 10) || null, reason]);
+  const r = await callApi('createShipment', [code, parseInt(qty, 10) || null, reason, parseInt(cab2, 10) || 0, parseInt(cab6, 10) || 0]);
   if (r.ok) {
     toast('Created ' + r.requestId);
     navigate('shipScan', r.requestId);
@@ -922,7 +932,8 @@ function setStatus(kind, msg) {
 let editDeviceRow = null;
 let editDeviceImei = '';
 let editDeviceStatusOptions = [];
-let editDeviceOriginal = {};
+let editDeviceCompanies = [];
+let editDeviceRequestIds = [];
 
 async function renderEditDevice() {
   titleEl.textContent = 'Edit Device';
@@ -936,7 +947,7 @@ async function renderEditDevice() {
     <button class="primary" id="edLookupBtn">Look up</button>
     <div class="or-divider">— or scan with camera —</div>
     <div id="edScanArea"></div>
-    <div id="edStatus" class="status ok" style="margin-top:10px">Enter or scan an IMEI to begin.</div>
+    <div id="edStatus" class="status ok" style="margin-top:10px">Loading dropdowns…</div>
     <div id="edForm" style="display:none; margin-top:14px"></div>
   `;
   document.getElementById('edLookupBtn').onclick = () => lookupEditImei(document.getElementById('edImei').value.trim());
@@ -948,11 +959,14 @@ async function renderEditDevice() {
     lookupEditImei(document.getElementById('edImei').value);
   });
 
-  // Load status options once
-  if (!editDeviceStatusOptions.length) {
-    const opts = await callApi('getDeviceStatuses', []);
-    if (Array.isArray(opts)) editDeviceStatusOptions = opts;
-  }
+  // Preload dropdown data (status options + company list)
+  const [opts, companies] = await Promise.all([
+    callApi('getDeviceStatuses', []),
+    callApi('getCompanyOptions', []),
+  ]);
+  if (Array.isArray(opts)) editDeviceStatusOptions = opts;
+  if (Array.isArray(companies)) editDeviceCompanies = companies;
+  setEdStatus('ok', 'Enter or scan an IMEI to begin.');
 }
 
 async function lookupEditImei(imei) {
@@ -962,13 +976,15 @@ async function lookupEditImei(imei) {
   if (!r.ok) { setEdStatus('err', r.message || 'Not found'); document.getElementById('edForm').style.display = 'none'; return; }
   editDeviceRow = r.rowIndex;
   editDeviceImei = r.imei;
-  editDeviceOriginal = {
-    batch: r.batch || '', type: r.type || '', status: r.status || '',
-    location: r.location || '', latestRequest: r.latestRequest || '',
-  };
   setEdStatus('ok', 'Loaded row ' + r.rowIndex);
+
   const statusOpts = '<option value="">--</option>' + editDeviceStatusOptions.map(o =>
     '<option value="' + o + '"' + (o === r.status ? ' selected' : '') + '>' + o + '</option>').join('');
+
+  // Company options for the dropdown + datalist for typeahead
+  const companyOpts = '<option value="">-- pick a company --</option>' +
+    editDeviceCompanies.map(c => '<option value="' + c.code + '">' + escapeHtml(c.name) + ' (' + c.code + ')</option>').join('');
+
   document.getElementById('edForm').innerHTML = `
     <div class="field"><label>Batch #</label><input id="edBatch" value="${escapeAttr(r.batch || '')}" /></div>
     <div class="field"><label>IMEI</label><input value="${escapeAttr(r.imei || '')}" readonly style="opacity:0.7" /></div>
@@ -981,7 +997,31 @@ async function lookupEditImei(imei) {
         <option value="Rob" ${r.location === 'Rob' ? 'selected' : ''}>Rob</option>
       </select>
     </div>
-    <div class="field"><label>Latest Request ID</label><input id="edReq" value="${escapeAttr(r.latestRequest || '')}" /></div>
+
+    <div class="or-divider">— Link or unlink IMEI from a shipment —</div>
+
+    <div class="field">
+      <label>Reason (leave blank to skip)</label>
+      <select id="edReason">
+        <option value="">(no shipment action)</option>
+        <option value="New">New — add to shipment</option>
+        <option value="Replacement">Replacement — add to shipment</option>
+        <option value="Joyride employee">Joyride employee — add to shipment</option>
+        <option value="Return">Return — unlink and add to Returns tab</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Company</label>
+      <input list="edCompanyList" id="edCompany" placeholder="Type to filter, or pick…" />
+      <datalist id="edCompanyList">
+        ${editDeviceCompanies.map(c => '<option value="' + c.code + '">' + escapeHtml(c.name) + ' (' + c.code + ')</option>').join('')}
+      </datalist>
+    </div>
+    <div class="field">
+      <label>Request ID</label>
+      <select id="edReq"><option value="">-- pick company first --</option></select>
+    </div>
+
     <div class="field"><label>Add a note (optional)</label>
       <input id="edNote" placeholder="Free-text note logged with timestamp" />
     </div>
@@ -989,15 +1029,28 @@ async function lookupEditImei(imei) {
       <div style="font-family:ui-monospace,Menlo,monospace; font-size:11px; background:#0f1418; padding:8px; border-radius:6px; max-height:160px; overflow:auto; white-space:pre-wrap">${escapeHtml(r.notes || '(none)')}</div>
     </div>
     <button class="primary" id="edSaveBtn">Save changes</button>
-    <button class="secondary" id="edClearBtn" style="margin-top:8px">Clear / Look up another</button>
+    <button class="secondary" id="edClearBtn" style="margin-top:8px">Clear &amp; look up another</button>
   `;
   document.getElementById('edSaveBtn').onclick = saveEditDevice;
-  document.getElementById('edClearBtn').onclick = () => {
-    document.getElementById('edImei').value = '';
-    document.getElementById('edForm').style.display = 'none';
-    setEdStatus('ok', 'Enter or scan an IMEI to begin.');
-  };
+  document.getElementById('edClearBtn').onclick = clearEditDeviceForm;
+  document.getElementById('edCompany').addEventListener('change', loadRequestIdsForPicked);
+  document.getElementById('edCompany').addEventListener('input', loadRequestIdsForPicked);
   document.getElementById('edForm').style.display = 'block';
+}
+
+async function loadRequestIdsForPicked() {
+  const code = document.getElementById('edCompany').value.trim();
+  const sel = document.getElementById('edReq');
+  if (!code) { sel.innerHTML = '<option value="">-- pick company first --</option>'; return; }
+  sel.innerHTML = '<option value="">Loading…</option>';
+  const list = await callApi('getRequestIdsForCompany', [code]);
+  if (!Array.isArray(list) || !list.length) {
+    sel.innerHTML = '<option value="">-- no request IDs for ' + code + ' --</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">-- pick a Request ID --</option>' +
+    list.map(r => '<option value="' + r.requestId + '">' + r.requestId + ' • ' + (r.status || '?') + ' • qty ' + (r.qty || '?') + '</option>').join('');
+  editDeviceRequestIds = list;
 }
 
 async function saveEditDevice() {
@@ -1007,20 +1060,53 @@ async function saveEditDevice() {
     type: document.getElementById('edType').value,
     status: document.getElementById('edStat').value,
     location: document.getElementById('edLoc').value,
-    latestRequest: document.getElementById('edReq').value,
     notesAddon: document.getElementById('edNote').value,
   };
+  const reason = document.getElementById('edReason').value;
+  const companyCode = document.getElementById('edCompany').value.trim();
+  const requestId = document.getElementById('edReq').value;
+
   setEdStatus('ok', 'Saving…');
-  const r = await callApi('updateDevice', [{ rowIndex: editDeviceRow, updates: updates }]);
-  if (r.ok) {
-    beep(900);
-    setEdStatus('ok', r.message + ' — IMEI ' + editDeviceImei);
-    // Re-lookup so existing notes refresh
-    lookupEditImei(editDeviceImei);
+
+  // First: apply Devices-side field changes
+  const fieldRes = await callApi('updateDevice', [{ rowIndex: editDeviceRow, updates }]);
+  if (!fieldRes.ok) { setEdStatus('err', 'Field update failed: ' + fieldRes.message); return; }
+
+  // Then: if a Reason+Company+RequestID was provided, fire the shipment/return action
+  if (reason && companyCode && requestId) {
+    const actRes = await callApi('recordImeiAction', [{
+      imei: editDeviceImei,
+      rowIndex: editDeviceRow,
+      reason,
+      companyCode,
+      requestId,
+    }]);
+    if (actRes.ok) {
+      beep(900);
+      setEdStatus('ok', fieldRes.message + '. ' + actRes.message);
+    } else {
+      buzz();
+      setEdStatus('err', actRes.message);
+      return;
+    }
+  } else if (reason || companyCode || requestId) {
+    setEdStatus('warn', fieldRes.message + '. Shipment action skipped — Reason + Company + Request ID all required.');
   } else {
-    buzz();
-    setEdStatus('err', r.message);
+    beep(900);
+    setEdStatus('ok', fieldRes.message);
   }
+
+  // Re-lookup so existing notes show the new entry
+  lookupEditImei(editDeviceImei);
+}
+
+function clearEditDeviceForm() {
+  editDeviceRow = null;
+  editDeviceImei = '';
+  document.getElementById('edImei').value = '';
+  document.getElementById('edImei').focus();
+  document.getElementById('edForm').style.display = 'none';
+  setEdStatus('ok', 'Cleared. Scan or type the next IMEI.');
 }
 
 function setEdStatus(kind, msg) {
