@@ -305,6 +305,7 @@ function navigate(view, ...args) {
   if (view === 'ship')        renderShipPicker();
   if (view === 'shipScan')    renderShipScan(args[0]);
   if (view === 'lookup')      renderLookup();
+  if (view === 'editDevice')  renderEditDevice();
   if (view === 'newShipment') renderNewShipment();
 }
 backBtn.onclick = () => navigate('home');
@@ -479,6 +480,12 @@ function renderHome() {
         <span class="icon">&#x1F50D;</span>
         <span>Lookup
           <small>Scan a unit to see its history</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="navigate('editDevice')">
+        <span class="icon" style="background:#3a6db5">&#x270E;</span>
+        <span>Edit Device
+          <small>Scan/type IMEI, change Status / Location / add Note</small>
         </span>
       </button>
     </div>
@@ -908,6 +915,123 @@ function setStatus(kind, msg) {
     s.innerHTML = msg;
   }
 }
+
+
+
+// ---------- EDIT DEVICE ----------
+let editDeviceRow = null;
+let editDeviceImei = '';
+let editDeviceStatusOptions = [];
+let editDeviceOriginal = {};
+
+async function renderEditDevice() {
+  titleEl.textContent = 'Edit Device';
+  editDeviceRow = null;
+  editDeviceImei = '';
+  app.innerHTML = `
+    <div class="field">
+      <label>IMEI</label>
+      <input id="edImei" placeholder="Scan or type IMEI" inputmode="numeric" autocomplete="off" />
+    </div>
+    <button class="primary" id="edLookupBtn">Look up</button>
+    <div class="or-divider">— or scan with camera —</div>
+    <div id="edScanArea"></div>
+    <div id="edStatus" class="status ok" style="margin-top:10px">Enter or scan an IMEI to begin.</div>
+    <div id="edForm" style="display:none; margin-top:14px"></div>
+  `;
+  document.getElementById('edLookupBtn').onclick = () => lookupEditImei(document.getElementById('edImei').value.trim());
+  document.getElementById('edImei').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('edLookupBtn').click();
+  });
+  renderScannerBlock('edScanArea', text => {
+    document.getElementById('edImei').value = text.replace(/\D/g, '').slice(0, 15);
+    lookupEditImei(document.getElementById('edImei').value);
+  });
+
+  // Load status options once
+  if (!editDeviceStatusOptions.length) {
+    const opts = await callApi('getDeviceStatuses', []);
+    if (Array.isArray(opts)) editDeviceStatusOptions = opts;
+  }
+}
+
+async function lookupEditImei(imei) {
+  if (!imei) { setEdStatus('warn', 'Type or scan an IMEI first.'); return; }
+  setEdStatus('ok', 'Looking up…');
+  const r = await callApi('lookupDevice', [imei]);
+  if (!r.ok) { setEdStatus('err', r.message || 'Not found'); document.getElementById('edForm').style.display = 'none'; return; }
+  editDeviceRow = r.rowIndex;
+  editDeviceImei = r.imei;
+  editDeviceOriginal = {
+    batch: r.batch || '', type: r.type || '', status: r.status || '',
+    location: r.location || '', latestRequest: r.latestRequest || '',
+  };
+  setEdStatus('ok', 'Loaded row ' + r.rowIndex);
+  const statusOpts = '<option value="">--</option>' + editDeviceStatusOptions.map(o =>
+    '<option value="' + o + '"' + (o === r.status ? ' selected' : '') + '>' + o + '</option>').join('');
+  document.getElementById('edForm').innerHTML = `
+    <div class="field"><label>Batch #</label><input id="edBatch" value="${escapeAttr(r.batch || '')}" /></div>
+    <div class="field"><label>IMEI</label><input value="${escapeAttr(r.imei || '')}" readonly style="opacity:0.7" /></div>
+    <div class="field"><label>Type</label><input id="edType" value="${escapeAttr(r.type || '')}" /></div>
+    <div class="field"><label>Status</label><select id="edStat">${statusOpts}</select></div>
+    <div class="field"><label>Location</label>
+      <select id="edLoc">
+        <option value="" ${!r.location ? 'selected' : ''}>(none)</option>
+        <option value="Toronto" ${r.location === 'Toronto' ? 'selected' : ''}>Toronto</option>
+        <option value="Rob" ${r.location === 'Rob' ? 'selected' : ''}>Rob</option>
+      </select>
+    </div>
+    <div class="field"><label>Latest Request ID</label><input id="edReq" value="${escapeAttr(r.latestRequest || '')}" /></div>
+    <div class="field"><label>Add a note (optional)</label>
+      <input id="edNote" placeholder="Free-text note logged with timestamp" />
+    </div>
+    <div class="field"><label>Existing notes</label>
+      <div style="font-family:ui-monospace,Menlo,monospace; font-size:11px; background:#0f1418; padding:8px; border-radius:6px; max-height:160px; overflow:auto; white-space:pre-wrap">${escapeHtml(r.notes || '(none)')}</div>
+    </div>
+    <button class="primary" id="edSaveBtn">Save changes</button>
+    <button class="secondary" id="edClearBtn" style="margin-top:8px">Clear / Look up another</button>
+  `;
+  document.getElementById('edSaveBtn').onclick = saveEditDevice;
+  document.getElementById('edClearBtn').onclick = () => {
+    document.getElementById('edImei').value = '';
+    document.getElementById('edForm').style.display = 'none';
+    setEdStatus('ok', 'Enter or scan an IMEI to begin.');
+  };
+  document.getElementById('edForm').style.display = 'block';
+}
+
+async function saveEditDevice() {
+  if (!editDeviceRow) { setEdStatus('warn', 'Look up an IMEI first.'); return; }
+  const updates = {
+    batch: document.getElementById('edBatch').value,
+    type: document.getElementById('edType').value,
+    status: document.getElementById('edStat').value,
+    location: document.getElementById('edLoc').value,
+    latestRequest: document.getElementById('edReq').value,
+    notesAddon: document.getElementById('edNote').value,
+  };
+  setEdStatus('ok', 'Saving…');
+  const r = await callApi('updateDevice', [{ rowIndex: editDeviceRow, updates: updates }]);
+  if (r.ok) {
+    beep(900);
+    setEdStatus('ok', r.message + ' — IMEI ' + editDeviceImei);
+    // Re-lookup so existing notes refresh
+    lookupEditImei(editDeviceImei);
+  } else {
+    buzz();
+    setEdStatus('err', r.message);
+  }
+}
+
+function setEdStatus(kind, msg) {
+  const s = document.getElementById('edStatus');
+  if (!s) return;
+  s.className = 'status ' + (kind === 'err' ? 'err' : kind === 'warn' ? 'warn' : 'ok');
+  s.textContent = msg;
+}
+
+function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ---------- Boot ----------
 renderRolePicker();
