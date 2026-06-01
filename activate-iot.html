@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>IoT Customer Actions</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<script>
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyr8cYcAbZQgh93W50-BzmPHzF46X0ON36s7Z1BJNSCV4T8WSRfIeMJUhZzbYpxIxad/exec';
+  const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
+</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 18px; background: #f5f7fa; color: #1f2933; max-width: 540px; }
+  h1 { margin: 0 0 6px; font-size: 20px; color: #1F3A5F; }
+  .sub { color: #667; font-size: 13px; margin-bottom: 18px; }
+  label { display: block; font-size: 12px; color: #445; margin: 10px 0 4px; font-weight: 600; }
+  .req { color: #c44; margin-left: 4px; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cdd5dd; border-radius: 6px; font-size: 14px; background: #fff; font-family: inherit; }
+  textarea { min-height: 60px; resize: vertical; }
+  button { width: 100%; margin-top: 14px; padding: 12px; background: #2bb673; color: #fff; border: none; border-radius: 6px; font-weight: 600; font-size: 15px; cursor: pointer; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 10px; border-radius: 6px; font-size: 13px; display: none; }
+  .status.ok { background: #d2f0d4; color: #176b3d; display: block; }
+  .status.err { background: #fce7e2; color: #893424; display: block; }
+  .info-pill { display: inline-block; background: #fff3a8; color: #7a5d00; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-top: 6px; }
+  .hint { color: #888; font-size: 11px; margin-top: 2px; }
+  .mode-tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .mode-tab { flex: 1; padding: 10px; text-align: center; background: #fff; border: 1px solid #cdd5dd; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .mode-tab.active { background: #2bb673; color: #fff; border-color: #2bb673; }
+</style>
+</head>
+<body>
+
+<h1>IoT Customer Actions</h1>
+<div class="sub">Activate a new IoT customer or create a request for one already activated.</div>
+
+<div class="mode-tabs">
+  <div class="mode-tab active" data-mode="activate" id="modeActivate">Activate IoT Customer</div>
+  <div class="mode-tab" data-mode="create" id="modeCreate">Create Request</div>
+</div>
+
+<div id="activateForm">
+  <label>Customer (from MCL — not yet activated)<span class="req">*</span></label>
+  <select id="actPicker"><option value="">Loading…</option></select>
+  <div id="actIoTPill" class="info-pill" style="display:none">—</div>
+
+  <label>Company Code<span class="req">*</span></label>
+  <input id="actCompanyCode" />
+
+  <label>MCL Alias <span style="font-weight:normal;color:#888">(only if MCL name differs)</span></label>
+  <input id="actMclAlias" />
+
+  <label>Point of Contact</label><input id="actContact" />
+  <label>Phone</label><input id="actPhone" />
+  <label>Email</label><input id="actEmail" type="email" />
+  <label>Address</label><textarea id="actAddress"></textarea>
+
+  <button id="actSubmitBtn">Activate</button>
+</div>
+
+<div id="createForm" style="display:none">
+  <label>Customer (already activated)<span class="req">*</span></label>
+  <input list="reqCustomerList" id="reqCustomer" placeholder="Type to filter…" />
+  <datalist id="reqCustomerList"></datalist>
+  <div id="reqIoTPill" class="info-pill" style="display:none">—</div>
+
+  <label>Reason</label>
+  <select id="reqReason">
+    <option value="New">New</option>
+    <option value="Replacement">Replacement</option>
+    <option value="Joyride employee">Joyride employee</option>
+  </select>
+
+  <label>Quantity Requested<span class="req">*</span></label>
+  <input id="reqQty" type="number" min="1" value="1" />
+
+  <button id="reqSubmitBtn">Create Request</button>
+</div>
+
+<div id="status" class="status"></div>
+
+<script>
+const el = id => document.getElementById(id);
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function setStatus(kind, msg) { const s = el('status'); s.className = 'status ' + kind; s.textContent = msg; }
+
+async function callApi(action, args) {
+  const res = await fetch(WEB_APP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ token: TOKEN, action, args: args || [] }),
+    redirect: 'follow', mode: 'cors',
+  });
+  if (!res.ok) return { ok: false, message: 'HTTP ' + res.status };
+  return await res.json();
+}
+
+let activatable = [];
+let iotCustomers = [];
+
+document.querySelectorAll('.mode-tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.mode-tab').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    const m = t.dataset.mode;
+    el('activateForm').style.display = m === 'activate' ? 'block' : 'none';
+    el('createForm').style.display = m === 'create' ? 'block' : 'none';
+    el('status').style.display = 'none';
+  };
+});
+
+callApi('getActivatableCustomers', []).then(list => {
+  if (list && list.error) { setStatus('err', list.error); return; }
+  activatable = list || [];
+  if (!activatable.length) {
+    el('actPicker').innerHTML = '<option value="">-- no activatable customers --</option>';
+  } else {
+    el('actPicker').innerHTML = '<option value="">-- pick a customer --</option>' +
+      activatable.map((c, i) => '<option value="' + i + '">' + esc(c.name) + ' — ' + esc(c.contractType) + '</option>').join('');
+  }
+});
+
+callApi('getIoTCustomersForRequest', []).then(list => {
+  iotCustomers = list || [];
+  el('reqCustomerList').innerHTML = iotCustomers.map(c =>
+    '<option value="' + esc(c.code) + '">' + esc(c.name) + ' (' + esc(c.code) + ') — ' + (c.totalIoTs || 0) + ' contracted</option>').join('');
+});
+
+el('actPicker').addEventListener('change', () => {
+  const i = parseInt(el('actPicker').value, 10);
+  if (isNaN(i)) { el('actIoTPill').style.display = 'none'; return; }
+  const c = activatable[i];
+  if (!c) return;
+  el('actContact').value = c.contact || '';
+  el('actEmail').value = c.email || '';
+  el('actIoTPill').style.display = 'inline-block';
+  el('actIoTPill').textContent = 'Contracted IoTs: ' + (c.totalIoTs || 0);
+});
+
+['change','input'].forEach(ev => el('reqCustomer').addEventListener(ev, () => {
+  const code = el('reqCustomer').value.trim().toLowerCase();
+  const c = iotCustomers.find(x => x.code.toLowerCase() === code);
+  if (c) { el('reqIoTPill').style.display = 'inline-block'; el('reqIoTPill').textContent = c.name + ' — Contracted IoTs: ' + (c.totalIoTs || 0); }
+  else { el('reqIoTPill').style.display = 'none'; }
+}));
+
+el('actSubmitBtn').onclick = async () => {
+  const i = parseInt(el('actPicker').value, 10);
+  if (isNaN(i)) { setStatus('err', 'Pick a customer first.'); return; }
+  const c = activatable[i];
+  const data = {
+    companyName: c.name,
+    companyCode: el('actCompanyCode').value.trim(),
+    mclAlias: el('actMclAlias').value.trim(),
+    contact: el('actContact').value.trim(),
+    phone: el('actPhone').value.trim(),
+    email: el('actEmail').value.trim(),
+    address: el('actAddress').value.trim(),
+  };
+  if (!data.companyCode) { setStatus('err', 'Company code is required.'); return; }
+  el('actSubmitBtn').disabled = true; el('actSubmitBtn').textContent = 'Activating…';
+  const r = await callApi('submitActivateIoT', [data]);
+  el('actSubmitBtn').disabled = false; el('actSubmitBtn').textContent = 'Activate';
+  if (r.ok) { setStatus('ok', r.message); ['actCompanyCode','actMclAlias','actContact','actPhone','actEmail','actAddress'].forEach(k => el(k).value = ''); el('actIoTPill').style.display = 'none'; }
+  else { setStatus('err', r.message); }
+};
+
+el('reqSubmitBtn').onclick = async () => {
+  const code = el('reqCustomer').value.trim();
+  if (!code) { setStatus('err', 'Pick a customer first.'); return; }
+  const data = { companyCode: code, qty: parseInt(el('reqQty').value, 10) || 0, reason: el('reqReason').value };
+  if (data.qty <= 0) { setStatus('err', 'Quantity must be > 0.'); return; }
+  el('reqSubmitBtn').disabled = true; el('reqSubmitBtn').textContent = 'Creating…';
+  const r = await callApi('submitCreateRequest', [data]);
+  el('reqSubmitBtn').disabled = false; el('reqSubmitBtn').textContent = 'Create Request';
+  if (r.ok) { setStatus('ok', 'Created ' + r.requestId + ' for ' + code + ' (qty ' + data.qty + ').'); el('reqQty').value = 1; }
+  else { setStatus('err', r.message); }
+};
+</script>
+</body>
+</html>
