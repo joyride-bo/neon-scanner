@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Add New Customer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<script>
+  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbyr8cYcAbZQgh93W50-BzmPHzF46X0ON36s7Z1BJNSCV4T8WSRfIeMJUhZzbYpxIxad/exec';
+  const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
+</script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 0; padding: 18px; background: #f5f7fa; color: #1f2933; max-width: 540px; }
+  h1 { margin: 0 0 6px; font-size: 20px; color: #1F3A5F; }
+  .sub { color: #667; font-size: 13px; margin-bottom: 18px; }
+  label { display: block; font-size: 12px; color: #445; margin: 10px 0 4px; font-weight: 600; }
+  .req { color: #c44; margin-left: 4px; }
+  input, select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cdd5dd; border-radius: 6px; font-size: 14px; background: #fff; }
+  input:focus, select:focus { outline: none; border-color: #2bb673; box-shadow: 0 0 0 2px rgba(43,182,115,0.18); }
+  button { width: 100%; margin-top: 14px; padding: 12px; background: #2bb673; color: #fff; border: none; border-radius: 6px; font-weight: 600; font-size: 15px; cursor: pointer; }
+  button:disabled { background: #aaa; cursor: not-allowed; }
+  .status { margin-top: 14px; padding: 10px; border-radius: 6px; font-size: 13px; display: none; }
+  .status.ok { background: #d2f0d4; color: #176b3d; display: block; }
+  .status.err { background: #fce7e2; color: #893424; display: block; }
+  .hint { color: #888; font-size: 11px; margin-top: 2px; }
+  .section { margin-top: 16px; padding: 12px; background: #fff; border: 1px solid #e1e6eb; border-radius: 8px; }
+  .section h3 { margin: 0 0 4px; font-size: 13px; color: #1F3A5F; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+</style>
+</head>
+<body>
+
+<h1>Add New Customer (Contract Signed)</h1>
+<div class="sub">Writes to Master Contract List. Submit from any browser tab.</div>
+
+<label>Company Name<span class="req">*</span></label>
+<input id="companyName" autocomplete="off" />
+
+<label>Point of Contact<span class="req">*</span></label>
+<input id="contact" autocomplete="off" />
+
+<label>Email<span class="req">*</span></label>
+<input id="email" type="email" autocomplete="off" />
+
+<label>Contract Type<span class="req">*</span></label>
+<select id="contractType"><option value="">Loading…</option></select>
+<div class="hint" id="iotHint" style="display:none">IoT contract — when ready to ship, use Activate IoT Customer.</div>
+
+<div class="row">
+  <div>
+    <label>Contract Start Date <span class="hint">(optional)</span></label>
+    <input id="contractStartDate" type="date" />
+  </div>
+  <div>
+    <label>Contract End Date <span class="hint">(optional)</span></label>
+    <input id="contractEndDate" type="date" />
+  </div>
+</div>
+
+<div class="section" id="iotBlock" style="display:none">
+  <h3>IoT Details</h3>
+  <label>Number of IoTs Ordered<span class="req">*</span></label>
+  <input id="numIoTs" type="number" min="1" />
+</div>
+
+<div class="section" id="standardBlock" style="display:none">
+  <h3>Plan Cost Details</h3>
+  <label>Base Cost of Plan ($)</label><input id="baseCost" type="number" step="any" min="0" />
+  <label>Vehicle Count Minimum</label><input id="vehicleCountMin" type="number" min="0" />
+  <label>Cost per Extra Vehicle ($)</label><input id="costPerExtraVehicle" type="number" step="any" min="0" />
+</div>
+
+<div class="section" id="reviiBlock" style="display:none">
+  <h3>Revii Plan Details</h3>
+  <label>Revii Cost per Vehicle ($)</label><input id="reviiCostPerVehicle" type="number" step="any" min="0" />
+  <label>Number of Vehicles</label><input id="numberOfVehicles" type="number" min="0" />
+  <label>Total Cost of Revii Plan ($)</label><input id="totalCostReviiPlan" type="number" step="any" min="0" />
+  <label>Revii Cost per Extra Vehicle ($)</label><input id="reviiCostPerExtraVehicle" type="number" step="any" min="0" />
+</div>
+
+<button id="submitBtn" disabled>Save to MCL</button>
+<div id="status" class="status"></div>
+
+<script>
+const el = id => document.getElementById(id);
+async function callApi(action, args) {
+  const res = await fetch(WEB_APP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ token: TOKEN, action, args: args || [] }),
+    redirect: 'follow', mode: 'cors',
+  });
+  if (!res.ok) return { ok: false, message: 'HTTP ' + res.status };
+  return await res.json();
+}
+function setStatus(kind, msg) { const s = el('status'); s.className = 'status ' + kind; s.textContent = msg; }
+
+callApi('getContractTypes', []).then(types => {
+  el('contractType').innerHTML = '<option value="">-- pick a contract type --</option>' +
+    (types || []).map(t => '<option value="' + t.replace(/"/g, '&quot;') + '">' + t + '</option>').join('');
+  el('submitBtn').disabled = false;
+});
+
+el('contractType').addEventListener('change', () => {
+  const v = el('contractType').value;
+  const isIoT = /iot|neon/i.test(v);
+  const isRevii = /revii/i.test(v);
+  const isStd = /(grow|scale|pro|launch)/i.test(v);
+  el('iotHint').style.display = isIoT ? 'block' : 'none';
+  el('iotBlock').style.display = isIoT ? 'block' : 'none';
+  el('standardBlock').style.display = isStd ? 'block' : 'none';
+  el('reviiBlock').style.display = isRevii ? 'block' : 'none';
+});
+
+el('submitBtn').onclick = async () => {
+  const data = {
+    companyName: el('companyName').value.trim(),
+    contact: el('contact').value.trim(),
+    email: el('email').value.trim(),
+    contractType: el('contractType').value,
+    contractStartDate: el('contractStartDate').value,
+    contractEndDate: el('contractEndDate').value,
+    numIoTs: el('numIoTs').value.trim(),
+    baseCost: el('baseCost').value.trim(),
+    vehicleCountMin: el('vehicleCountMin').value.trim(),
+    costPerExtraVehicle: el('costPerExtraVehicle').value.trim(),
+    reviiCostPerVehicle: el('reviiCostPerVehicle').value.trim(),
+    numberOfVehicles: el('numberOfVehicles').value.trim(),
+    totalCostReviiPlan: el('totalCostReviiPlan').value.trim(),
+    reviiCostPerExtraVehicle: el('reviiCostPerExtraVehicle').value.trim(),
+  };
+  if (!data.companyName || !data.contact || !data.email || !data.contractType) {
+    setStatus('err', 'Company Name, Contact, Email, and Contract Type are required.'); return;
+  }
+  const isIoT = /iot|neon/i.test(data.contractType);
+  if (isIoT && (!data.numIoTs || parseInt(data.numIoTs, 10) <= 0)) {
+    setStatus('err', 'IoT contracts require a Number of IoTs Ordered.'); return;
+  }
+  el('submitBtn').disabled = true; el('submitBtn').textContent = 'Saving…';
+  const r = await callApi('submitNewCustomer', [data]);
+  el('submitBtn').disabled = false; el('submitBtn').textContent = 'Save to MCL';
+  if (r.ok) {
+    setStatus('ok', r.message);
+    ['companyName','contact','email','contractType','contractStartDate','contractEndDate','numIoTs','baseCost','vehicleCountMin','costPerExtraVehicle','reviiCostPerVehicle','numberOfVehicles','totalCostReviiPlan','reviiCostPerExtraVehicle']
+      .forEach(k => el(k).value = '');
+    el('iotHint').style.display = 'none';
+    el('iotBlock').style.display = 'none';
+    el('standardBlock').style.display = 'none';
+    el('reviiBlock').style.display = 'none';
+  } else {
+    setStatus('err', r.message || 'Failed');
+  }
+};
+</script>
+</body>
+</html>
