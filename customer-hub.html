@@ -14,10 +14,10 @@
   .container { max-width: 100%; margin: 0 auto; padding: 0; }
   .form-container { max-width: 600px; margin: 0 auto; padding: 18px; }
   h1 { margin: 12px 18px 8px; font-size: 22px; color: #1F3A5F; }
-  .nav { display: flex; flex-wrap: nowrap; gap: 2px; padding: 0 12px; margin-bottom: 12px; border-bottom: 2px solid #cdd5dd; background: #fff; align-items: stretch; overflow: visible; }
-  .nav-tab { padding: 10px 14px; background: transparent; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: #667; white-space: nowrap; flex: 0 0 auto; }
-  .nav-tab:hover { background: #f3f6f9; color: #1F3A5F; }
-  .tools-wrap { position: relative; flex: 0 0 auto; margin-left: 8px; align-self: center; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 10px 18px; margin-bottom: 8px; border-bottom: 2px solid #cdd5dd; background: #fff; }
+  .nav-select { flex: 1; max-width: 320px; padding: 8px 10px; border: 1px solid #cdd5dd; border-radius: 6px; font-size: 14px; font-weight: 600; color: #1F3A5F; background: #f7f8fa; cursor: pointer; }
+  .nav-select:focus { outline: none; border-color: #2bb673; }
+  .tools-wrap { position: relative; flex: 0 0 auto; }
   .tools-btn { padding: 8px 14px; background: #1F3A5F; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
   .tools-menu { position: fixed; background: #fff; border: 1px solid #cdd5dd; border-radius: 6px; padding: 4px; min-width: 250px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; z-index: 1000; }
   .tools-menu.open { display: block; }
@@ -61,11 +61,13 @@
 <h1>Neon Tracker — Customer Hub</h1>
 
 <nav class="nav">
-  <button class="nav-tab active" data-panel="add">Add New Customer</button>
-  <button class="nav-tab" data-panel="iot">IoT Customer Actions</button>
-  <button class="nav-tab" data-panel="ces">Customer Exec Summary</button>
-  <button class="nav-tab" data-panel="ues">Unit Exec Summary</button>
-  <button class="nav-tab" data-panel="ss">Shipment Summary</button>
+  <select class="nav-select" id="navSelect">
+    <option value="add">Add New Customer</option>
+    <option value="iot">IoT Customer Actions</option>
+    <option value="ces">Customer Exec Summary</option>
+    <option value="ues">Unit Exec Summary</option>
+    <option value="ss">Shipment Summary</option>
+  </select>
   <div class="tools-wrap">
     <button class="tools-btn" id="toolsBtn">Tools ▾</button>
     <div class="tools-menu" id="toolsMenu">
@@ -211,19 +213,15 @@ async function callApi(action, args) {
   return await res.json();
 }
 
-// ---- Nav ----
+// ---- Nav (dropdown) ----
 let summaryIframesLoaded = false;
-document.querySelectorAll('.nav-tab').forEach(t => {
-  t.onclick = () => {
-    document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    el('panel-' + t.dataset.panel).classList.add('active');
-    // Lazy-load summary iframes the first time a summary tab is opened.
-    if (['ces','ues','ss'].includes(t.dataset.panel) && !summaryIframesLoaded) {
-      loadSummaryIframes();
-    }
-  };
+el('navSelect').addEventListener('change', () => {
+  const panel = el('navSelect').value;
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  el('panel-' + panel).classList.add('active');
+  if (['ces','ues','ss'].includes(panel) && !summaryIframesLoaded) {
+    loadSummaryIframes();
+  }
 });
 
 async function loadSummaryIframes() {
