@@ -14,14 +14,12 @@
   .container { max-width: 100%; margin: 0 auto; padding: 0; }
   .form-container { max-width: 600px; margin: 0 auto; padding: 18px; }
   h1 { margin: 12px 18px 8px; font-size: 22px; color: #1F3A5F; }
-  .nav { display: flex; flex-wrap: nowrap; gap: 6px; padding: 0 18px; margin-bottom: 12px; border-bottom: 2px solid #cdd5dd; background: #fff; overflow-x: auto; -webkit-overflow-scrolling: touch; align-items: center; }
-  .nav::-webkit-scrollbar { height: 4px; }
-  .nav::-webkit-scrollbar-thumb { background: #cdd5dd; }
+  .nav { display: flex; flex-wrap: nowrap; gap: 2px; padding: 0 12px; margin-bottom: 12px; border-bottom: 2px solid #cdd5dd; background: #fff; align-items: stretch; overflow: visible; }
   .nav-tab { padding: 10px 14px; background: transparent; border: none; border-bottom: 3px solid transparent; cursor: pointer; font-size: 13px; font-weight: 600; color: #667; white-space: nowrap; flex: 0 0 auto; }
-  .nav-spacer { flex: 1 1 auto; }
-  .tools-wrap { position: relative; flex: 0 0 auto; }
+  .nav-tab:hover { background: #f3f6f9; color: #1F3A5F; }
+  .tools-wrap { position: relative; flex: 0 0 auto; margin-left: 8px; align-self: center; }
   .tools-btn { padding: 8px 14px; background: #1F3A5F; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; }
-  .tools-menu { position: absolute; right: 0; top: 100%; background: #fff; border: 1px solid #cdd5dd; border-radius: 6px; padding: 4px; min-width: 250px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: none; z-index: 100; }
+  .tools-menu { position: fixed; background: #fff; border: 1px solid #cdd5dd; border-radius: 6px; padding: 4px; min-width: 250px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; z-index: 1000; }
   .tools-menu.open { display: block; }
   .tools-menu button { width: 100%; text-align: left; background: transparent; color: #1f2933; border: none; padding: 8px 10px; font-size: 13px; cursor: pointer; border-radius: 4px; margin-top: 0; font-weight: 500; }
   .tools-menu button:hover { background: #eef1f4; }
@@ -68,7 +66,6 @@
   <button class="nav-tab" data-panel="ces">Customer Exec Summary</button>
   <button class="nav-tab" data-panel="ues">Unit Exec Summary</button>
   <button class="nav-tab" data-panel="ss">Shipment Summary</button>
-  <div class="nav-spacer"></div>
   <div class="tools-wrap">
     <button class="tools-btn" id="toolsBtn">Tools ▾</button>
     <div class="tools-menu" id="toolsMenu">
@@ -232,7 +229,7 @@ document.querySelectorAll('.nav-tab').forEach(t => {
 async function loadSummaryIframes() {
   const r = await callApi('getEmbedInfo', []);
   if (!r || !r.sheetId || !r.gids) return;
-  const base = 'https://docs.google.com/spreadsheets/d/' + r.sheetId + '/edit?rm=minimal';
+  const base = 'https://docs.google.com/spreadsheets/d/' + r.sheetId + '/edit?rm=minimal&headers=false';
   const mk = (name) => r.gids[name] != null ? base + '&gid=' + r.gids[name] + '&single=true' : 'about:blank';
   el('iframe-ces').src = mk('Customer_Exec_Summary');
   el('iframe-ues').src = mk('Unit_Exec_Summary');
@@ -387,7 +384,15 @@ const toolsBtn = el('toolsBtn');
 const toolsMenu = el('toolsMenu');
 toolsBtn.onclick = (e) => {
   e.stopPropagation();
-  toolsMenu.classList.toggle('open');
+  if (toolsMenu.classList.contains('open')) {
+    toolsMenu.classList.remove('open');
+    return;
+  }
+  // Position the menu under the button
+  const r = toolsBtn.getBoundingClientRect();
+  toolsMenu.style.top = (r.bottom + 4) + 'px';
+  toolsMenu.style.left = Math.max(8, r.right - 260) + 'px';
+  toolsMenu.classList.add('open');
 };
 document.addEventListener('click', (e) => {
   if (!toolsMenu.contains(e.target) && e.target !== toolsBtn) toolsMenu.classList.remove('open');
