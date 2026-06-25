@@ -9,7 +9,7 @@
      ==================================================================== -->
 <script>
   // 1) Paste your Apps Script Web App /exec URL here:
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzTlKqrrwK0KSpar4Hpn2kLrraJtZ93Hf7ew2SGm8adhgN_C2WEDV6PuQdWxZQHJ1ao/exec';
+  const WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';
 
   // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
   const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
@@ -769,35 +769,24 @@ async function renderNewShipment() {
     <div class="field"><label>Quantity Requested</label>
       <input id="qty" type="number" min="1" value="1" />
     </div>
-    <div class="field"><label>Cable Type (optional)</label>
-      <select id="cabType"><option value="">-- none --</option></select>
+    <div class="field"><label>2-pin cables qty</label>
+      <input id="cab2pin" type="number" min="0" value="0" />
     </div>
-    <div class="field"><label>Cable Quantity</label>
-      <input id="cabQty" type="number" min="0" value="0" />
+    <div class="field"><label>6-pin cables qty</label>
+      <input id="cab6pin" type="number" min="0" value="0" />
     </div>
     <button class="primary" onclick="createShipmentAndGo()">Create &amp; start scanning</button>
   `;
-  // Populate cable types
-  (async () => {
-    if (!cableTypes.length) {
-      const types = await callApi('getCableTypes', []);
-      if (Array.isArray(types)) cableTypes = types;
-    }
-    const cs = document.getElementById('cabType');
-    if (cs && cableTypes.length) {
-      cs.innerHTML = '<option value="">-- none --</option>' + cableTypes.map(t => '<option value="' + t + '">' + t + '</option>').join('');
-    }
-  })();
 }
 async function createShipmentAndGo() {
   const code = document.getElementById('cust').value;
   const reason = document.getElementById('reason').value;
   const qty = document.getElementById('qty').value;
-  const cableType = document.getElementById('cabType').value || '';
-  const cableQty = parseInt(document.getElementById('cabQty').value, 10) || 0;
+  const cab2pin = parseInt(document.getElementById('cab2pin').value, 10) || 0;
+  const cab6pin = parseInt(document.getElementById('cab6pin').value, 10) || 0;
   if (!code) { toast('Pick a customer'); return; }
-  // createShipment now expects: code, qty, reason, cableType, cableQty
-  const r = await callApi('createShipment', [code, parseInt(qty, 10) || null, reason, cableType, cableQty]);
+  // createShipment now expects: code, qty, reason, cab2pin, cab6pin
+  const r = await callApi('createShipment', [code, parseInt(qty, 10) || null, reason, cab2pin, cab6pin]);
   if (r.ok) {
     toast('Created ' + r.requestId);
     navigate('shipScan', r.requestId);
@@ -815,20 +804,15 @@ async function renderShipScan(requestId) {
   // currentCount was set by precount; reset here so counter starts at 0.
   currentCount = 0;
   titleEl.textContent = 'Ship: ' + requestId;
-  // Preload cable types if not already cached
-  if (!cableTypes.length) {
-    const types = await callApi('getCableTypes', []);
-    if (Array.isArray(types)) cableTypes = types;
-  }
   app.innerHTML = `
     ${counterBannerHTML()}
     <div id="scanArea"></div>
     <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
-    <div class="field" style="margin-top:12px"><label>Cable Type (optional)</label>
-      <select id="shipCableType"><option value="">-- none --</option></select>
+    <div class="field" style="margin-top:12px"><label>2-pin cables qty</label>
+      <input id="shipCab2pin" type="number" min="0" value="0" />
     </div>
-    <div class="field"><label>Cable Quantity</label>
-      <input id="shipCableQty" type="number" min="0" value="0" />
+    <div class="field"><label>6-pin cables qty</label>
+      <input id="shipCab6pin" type="number" min="0" value="0" />
     </div>
     <div class="footer-actions">
       <div class="row">
@@ -837,11 +821,6 @@ async function renderShipScan(requestId) {
       </div>
     </div>
   `;
-  // Populate cable type dropdown
-  const cs = document.getElementById('shipCableType');
-  if (cs && cableTypes.length) {
-    cs.innerHTML = '<option value="">-- none --</option>' + cableTypes.map(t => '<option value="' + t + '">' + t + '</option>').join('');
-  }
   renderScannerBlock('scanArea', onShipScan);
 }
 async function onShipScan(text) {
@@ -886,9 +865,9 @@ async function undoLast() {
 }
 async function finalize() {
   if (!confirm('Finalize ' + currentRequestId + '? This sets Qty Shipped + Date Shipped.')) return;
-  const cableType = (document.getElementById('shipCableType') && document.getElementById('shipCableType').value) || '';
-  const cableQty = parseInt(document.getElementById('shipCableQty') && document.getElementById('shipCableQty').value, 10) || 0;
-  const r = await callApi('finalizeShipment', [currentRequestId, cableType, cableQty]);
+  const cab2pin = parseInt((document.getElementById('shipCab2pin') || {}).value, 10) || 0;
+  const cab6pin = parseInt((document.getElementById('shipCab6pin') || {}).value, 10) || 0;
+  const r = await callApi('finalizeShipment', [currentRequestId, cab2pin, cab6pin]);
   if (r.ok) {
     toast(r.message, 3000);
     setTimeout(() => navigate('home'), 1200);
