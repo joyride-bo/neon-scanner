@@ -9,7 +9,7 @@
      ==================================================================== -->
 <script>
   // 1) Paste your Apps Script Web App /exec URL here:
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzTlKqrrwK0KSpar4Hpn2kLrraJtZ93Hf7ew2SGm8adhgN_C2WEDV6PuQdWxZQHJ1ao/exec';
+  const WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';
 
   // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
   const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
@@ -304,6 +304,8 @@ function navigate(view, ...args) {
   if (view === 'receive')     renderReceive();
   if (view === 'ship')        renderShipPicker();
   if (view === 'shipScan')    renderShipScan(args[0]);
+  if (view === 'receiveReturn')     renderReceiveReturnPicker();
+  if (view === 'receiveReturnScan') renderReceiveReturnScan(args[0]);
   if (view === 'lookup')      renderLookup();
   if (view === 'editDevice')  renderEditDevice();
   if (view === 'newShipment') renderNewShipment();
@@ -375,6 +377,10 @@ function skipPrecount(extra) {
 async function proceedAfterPrecount(extra) {
   if (pendingFlow === 'receive') {
     renderReceiveScan();
+    return;
+  }
+  if (pendingFlow === 'receiveReturn') {
+    navigate('receiveReturnScan', extra);
     return;
   }
   if (pendingFlow === 'ship') {
@@ -453,6 +459,12 @@ function renderHome() {
             <small>Pick an open shipment, or type a company name</small>
           </span>
         </button>
+        <button class="home-btn" onclick="navigate('receiveReturn')">
+          <span class="icon" style="background:#9b4a4a">&#x21A9;</span>
+          <span>Receive Return
+            <small>Scan units coming back from a customer</small>
+          </span>
+        </button>
       </div>
       <div style="margin-top:20px; text-align:center">
         <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
@@ -474,6 +486,12 @@ function renderHome() {
         <span class="icon">&#x1F4E6;</span>
         <span>Ship
           <small>Link IMEIs to a Request ID as you pack</small>
+        </span>
+      </button>
+      <button class="home-btn" onclick="navigate('receiveReturn')">
+        <span class="icon" style="background:#9b4a4a">&#x21A9;</span>
+        <span>Receive Return
+          <small>Scan units coming back from a customer</small>
         </span>
       </button>
       <button class="home-btn" onclick="navigate('lookup')">
@@ -746,8 +764,122 @@ function goShip() {
 function goShipRecon() {
   const v = (document.getElementById('reconCompany').value || '').trim();
   if (!v) { toast('Type a company name'); return; }
-  // Encode the company in the extra arg; precount → proceedAfterPrecount will create the shipment.
   navigate('precount', 'ship', '__RECON__:' + v);
+}
+
+
+// ---------- RECEIVE RETURN ----------
+let returnScans = [];
+
+async function renderReceiveReturnPicker() {
+  titleEl.textContent = 'Receive Return — pick request';
+  app.innerHTML = `<div class="status ok">Loading open return requests…</div>`;
+  const list = await callApi('getOpenReturnRequests', []);
+  if (!Array.isArray(list)) {
+    app.innerHTML = `<div class="status err">${(list && list.message) || 'Failed to load returns'}</div>`;
+    return;
+  }
+  if (!list.length) {
+    app.innerHTML = `
+      <div class="status">No open return requests.</div>
+      <div style="margin-top:12px;color:#888;font-size:13px;line-height:1.4;">
+        Create one first: in the Shipments tab, add a row with the customer's Company Code,
+        set Reason to "Return", and Status to TBD. Then come back here.
+      </div>
+    `;
+    return;
+  }
+  let opts = '<option value="">-- pick a Return Request --</option>';
+  list.forEach(r => {
+    const label = r.requestId + ' — ' + r.company + ' (expects ' + (r.qty || '?') + ')';
+    opts += `<option value="${r.requestId}">${label}</option>`;
+  });
+  app.innerHTML = `
+    <div class="field"><label>Open Return Requests</label>
+      <select id="retReqPick">${opts}</select>
+    </div>
+    <button class="primary" onclick="goReceiveReturn()">Continue</button>
+    <div style="margin-top:14px;color:#888;font-size:12px;line-height:1.4;">
+      Each scanned IMEI will: unlink from its outbound shipment, set Devices Status to "Status Check",
+      and append to the Returns tab grouped under this Request ID.
+    </div>
+  `;
+}
+function goReceiveReturn() {
+  const v = document.getElementById('retReqPick').value;
+  if (!v) { toast('Pick a Return Request'); return; }
+  navigate('precount', 'receiveReturn', v);
+}
+
+async function renderReceiveReturnScan(requestId) {
+  if (!requestId) { navigate('receiveReturn'); return; }
+  currentRequestId = requestId;
+  returnScans = [];
+  currentCount = 0;
+  titleEl.textContent = 'Receive Return: ' + requestId;
+  app.innerHTML = `
+    ${counterBannerHTML()}
+    <div id="scanArea"></div>
+    <div class="scan-list" id="list"><div class="empty">No scans yet.</div></div>
+    <div class="footer-actions">
+      <div class="row">
+        <button class="secondary" onclick="undoLastReturnScan()">Undo last</button>
+        <button class="primary" onclick="finalizeReturn()">Finalize</button>
+      </div>
+    </div>
+  `;
+  renderScannerBlock('scanArea', onReceiveReturnScan);
+}
+
+async function onReceiveReturnScan(text) {
+  const now = Date.now();
+  if (text === lastScan && now - lastScanTime < 2000) return;
+  lastScan = text; lastScanTime = now;
+  const r = await callApi('recordReturnedItem', [currentRequestId, text, currentRole]);
+  if (r.ok) {
+    beep(r.warning ? 600 : 900);
+    currentCount = r.countSoFar || (currentCount + 1);
+    refreshCounter();
+    returnScans.unshift({ imei: r.imei, warn: r.warning, message: r.message });
+    setStatus(r.warning ? 'warn' : 'ok', r.message);
+    renderReturnList();
+  } else if (r.duplicate) {
+    beep(500); setStatus('warn', r.message);
+  } else {
+    buzz(); setStatus('err', r.message);
+  }
+}
+function renderReturnList() {
+  const list = document.getElementById('list');
+  if (!returnScans.length) { list.innerHTML = '<div class="empty">No scans yet.</div>'; return; }
+  list.innerHTML = returnScans.map(r => `
+    <div class="item">
+      <span class="imei">${r.imei}</span>
+      ${r.warn ? '<span style="color:var(--warn);font-size:12px">unknown</span>' : ''}
+    </div>
+  `).join('');
+}
+async function undoLastReturnScan() {
+  const r = await callApi('undoLastScan', [currentRequestId]);
+  if (r.ok) {
+    toast(r.message);
+    if (returnScans.length) returnScans.shift();
+    currentCount = Math.max(0, currentCount - 1);
+    refreshCounter();
+    renderReturnList();
+  } else {
+    toast(r.message);
+  }
+}
+async function finalizeReturn() {
+  if (!confirm('Finalize return ' + currentRequestId + '? This sets Qty Shipped to -' + currentCount + ' and closes the Return Request.')) return;
+  const r = await callApi('finalizeReturn', [currentRequestId]);
+  if (r.ok) {
+    toast(r.message, 3000);
+    setTimeout(() => navigate('home'), 1200);
+  } else {
+    toast(r.message);
+  }
 }
 
 // ---------- SHIP — new shipment ----------
