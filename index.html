@@ -670,8 +670,8 @@ async function renderShipPicker() {
     const remaining = s.qty > 0 ? Math.max(0, s.qty - (s.itemsLinked || 0)) : '?';
     opts += `<option value="${s.requestId}">${s.requestId}  •  ${s.company}  •  ${remaining} left of ${s.qty || '?'}</option>`;
   });
-  const createNewBtn = /* Rob role retired */ true ?
-    `<button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>`;
+  // Rob role retired — always show the "Create new shipment" button.
+  const createNewBtn = `<button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>`;
 
   app.innerHTML = `
     <div class="field">
