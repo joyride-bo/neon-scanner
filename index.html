@@ -281,7 +281,7 @@ let lastScanTime = 0;
 let currentScanCallback = null;
 
 // New state for v2: role + per-session expected/current counts
-let currentRole = '';       // 'toronto' | 'rob'
+let currentRole = 'toronto';   // Only role used (Rob role retired)
 let expectedCount = 0;      // user-entered target before a scan session
 let currentCount = 0;       // running count for current scan session
 let reconCompany = '';      // company name when using the type-in shortcut
@@ -297,8 +297,7 @@ function stopScanner() {
 
 function navigate(view, ...args) {
   stopScanner();
-  backBtn.style.display = (view === 'home' || view === 'rolepicker') ? 'none' : 'inline-block';
-  if (view === 'rolepicker')  renderRolePicker();
+  backBtn.style.display = (view === 'home') ? 'none' : 'inline-block';
   if (view === 'home')        renderHome();
   if (view === 'precount')    renderPrecount(args[0], args[1]);
   if (view === 'receive')     renderReceive();
@@ -313,33 +312,6 @@ function navigate(view, ...args) {
 backBtn.onclick = () => navigate('home');
 
 // ---------- ROLE PICKER ----------
-function renderRolePicker() {
-  titleEl.textContent = 'Neon Scanner';
-  app.innerHTML = `
-    <div style="text-align:center; padding: 10px 0 20px; color: var(--muted)">
-      Who's using this scanner?
-    </div>
-    <div class="home-grid">
-      <button class="home-btn" onclick="pickRole('toronto')">
-        <span class="icon">&#x1F3E2;</span>
-        <span>Toronto Office
-          <small>Full access — receive, ship, lookup, create shipments</small>
-        </span>
-      </button>
-      <button class="home-btn" onclick="pickRole('rob')" style="border-color:#6b5a2a">
-        <span class="icon" style="background:#d6a83a">&#x1F4E6;</span>
-        <span>Rob
-          <small>Receive units, ship to open shipments only</small>
-        </span>
-      </button>
-    </div>
-  `;
-}
-function pickRole(role) {
-  currentRole = role;
-  navigate('home');
-}
-
 // ---------- PRE-COUNT PROMPT ----------
 // flow: 'receive' or 'ship'
 // extra: for 'ship', the Request ID (or null if using company-name shortcut later)
@@ -439,41 +411,7 @@ function renderHome() {
   if (WEB_APP_URL === 'PASTE_YOUR_EXEC_URL_HERE') {
     warning = '<div class="config-warning"><b>Setup not finished:</b> edit the WEB_APP_URL near the top of this HTML file before scanning.</div>';
   }
-  const roleLabel = currentRole === 'rob' ? 'Rob' : 'Toronto Office';
-  const roleClass = currentRole === 'rob' ? 'role-badge rob' : 'role-badge';
-  titleEl.innerHTML = 'Neon Scanner <span class="' + roleClass + '">' + roleLabel + '</span>';
-
-  // Rob: Receive Units + Ship Units only
-  if (currentRole === 'rob') {
-    app.innerHTML = warning + `
-      <div class="home-grid">
-        <button class="home-btn" onclick="navigate('precount','receive')">
-          <span class="icon">&#x1F4E5;</span>
-          <span>Receive Units
-            <small>Scan units arriving to Rob. New units get batch # R-YYMMDD.</small>
-          </span>
-        </button>
-        <button class="home-btn" onclick="navigate('ship')">
-          <span class="icon">&#x1F4E6;</span>
-          <span>Ship Units
-            <small>Pick an open shipment, or type a company name</small>
-          </span>
-        </button>
-        <button class="home-btn" onclick="navigate('receiveReturn')">
-          <span class="icon" style="background:#9b4a4a">&#x21A9;</span>
-          <span>Receive Return
-            <small>Scan units coming back from a customer</small>
-          </span>
-        </button>
-      </div>
-      <div style="margin-top:20px; text-align:center">
-        <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
-      </div>
-    `;
-    return;
-  }
-
-  // Toronto Office: full menu
+  titleEl.innerHTML = 'Neon Scanner <span class="role-badge">Toronto Office</span>';
   app.innerHTML = warning + `
     <div class="home-grid">
       <button class="home-btn" onclick="navigate('receive')">
@@ -506,9 +444,6 @@ function renderHome() {
           <small>Scan/type IMEI, change Status / Location / add Note</small>
         </span>
       </button>
-    </div>
-    <div style="margin-top:20px; text-align:center">
-      <button class="secondary" style="max-width:200px; margin:0 auto" onclick="navigate('rolepicker')">Switch role</button>
     </div>
   `;
 }
@@ -674,8 +609,7 @@ function renderReceive() {
 
 // Actual scan UI for the receive flow (both roles land here after precount).
 function renderReceiveScan() {
-  const isRob = currentRole === 'rob';
-  titleEl.textContent = isRob ? 'Receive (Rob)' : 'Receive Devices';
+  titleEl.textContent = 'Receive Devices';
   app.innerHTML = `
     ${counterBannerHTML()}
     <div id="scanArea"></div>
@@ -692,13 +626,13 @@ async function onReceiveScan(text) {
   const now = Date.now();
   if (text === lastScan && now - lastScanTime < 2000) return;
   lastScan = text; lastScanTime = now;
-  const batch = currentRole === 'rob' ? null : (window._torontoBatch || '');
+  const batch = (window._torontoBatch || '');
   const r = await callApi('recordReceived', [batch, text, currentRole]);
   if (r.ok) {
     beep(r.action === 'location-updated' ? 700 : 900);
     currentCount += 1;
     refreshCounter();
-    recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location → Rob' : 'added' });
+    recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location updated' : 'added' });
     renderRecentReceives();
     setStatus('ok', r.message);
   } else if (r.duplicate) {
@@ -736,7 +670,7 @@ async function renderShipPicker() {
     const remaining = s.qty > 0 ? Math.max(0, s.qty - (s.itemsLinked || 0)) : '?';
     opts += `<option value="${s.requestId}">${s.requestId}  •  ${s.company}  •  ${remaining} left of ${s.qty || '?'}</option>`;
   });
-  const createNewBtn = currentRole === 'rob' ? '' :
+  const createNewBtn = /* Rob role retired */ true ?
     `<button class="secondary" onclick="navigate('newShipment')">Create new shipment</button>`;
 
   app.innerHTML = `
@@ -1260,7 +1194,7 @@ function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // ---------- Boot ----------
-renderRolePicker();
+navigate('home');
 </script>
 </body>
 </html>
