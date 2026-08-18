@@ -9,7 +9,7 @@
      ==================================================================== -->
 <script>
   // 1) Paste your Apps Script Web App /exec URL here:
-  const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzTlKqrrwK0KSpar4Hpn2kLrraJtZ93Hf7ew2SGm8adhgN_C2WEDV6PuQdWxZQHJ1ao/exec';
+  const WEB_APP_URL = 'PASTE_YOUR_EXEC_URL_HERE';
 
   // 2) Must EXACTLY match SCANNER_TOKEN in WebApp.gs. Keep it private.
   const TOKEN = 'nt-aJ7xQ9mK4pW2vN8rE5sB3hF6dY1z';
@@ -278,6 +278,10 @@ let scanIntervalId = null;
 let detector = null;
 let lastScan = '';
 let lastScanTime = 0;
+// In-flight guard — while true, all new scan callbacks are ignored.
+// Prevents the 250ms detection loop from firing multiple concurrent
+// server calls when the network round-trip is slow.
+let scanInFlight = false;
 let currentScanCallback = null;
 
 // New state for v2: role + per-session expected/current counts
@@ -624,22 +628,26 @@ function renderReceiveScan() {
 
 async function onReceiveScan(text) {
   const now = Date.now();
-  if (text === lastScan && now - lastScanTime < 2000) return;
+  if (text === lastScan && now - lastScanTime < 3000) return;
+  if (scanInFlight) return;
   lastScan = text; lastScanTime = now;
-  const batch = (window._torontoBatch || '');
-  const r = await callApi('recordReceived', [batch, text, currentRole]);
-  if (r.ok) {
-    beep(r.action === 'location-updated' ? 700 : 900);
-    currentCount += 1;
-    refreshCounter();
-    recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location updated' : 'added' });
-    renderRecentReceives();
-    setStatus('ok', r.message);
-  } else if (r.duplicate) {
-    beep(500); setStatus('warn', r.message);
-  } else {
-    buzz(); setStatus('err', r.message);
-  }
+  scanInFlight = true;
+  try {
+    const batch = (window._torontoBatch || '');
+    const r = await callApi('recordReceived', [batch, text, currentRole]);
+    if (r.ok) {
+      beep(r.action === 'location-updated' ? 700 : 900);
+      currentCount += 1;
+      refreshCounter();
+      recentReceives.unshift({ imei: r.imei, note: r.action === 'location-updated' ? 'location updated' : 'added' });
+      renderRecentReceives();
+      setStatus('ok', r.message);
+    } else if (r.duplicate) {
+      beep(500); setStatus('warn', r.message);
+    } else {
+      buzz(); setStatus('err', r.message);
+    }
+  } finally { scanInFlight = false; }
 }
 function renderRecentReceives() {
   const list = document.getElementById('list');
@@ -767,21 +775,25 @@ async function renderReceiveReturnScan(requestId) {
 
 async function onReceiveReturnScan(text) {
   const now = Date.now();
-  if (text === lastScan && now - lastScanTime < 2000) return;
+  if (text === lastScan && now - lastScanTime < 3000) return;
+  if (scanInFlight) return;
   lastScan = text; lastScanTime = now;
-  const r = await callApi('recordReturnedItem', [currentRequestId, text, currentRole]);
-  if (r.ok) {
-    beep(r.warning ? 600 : 900);
-    currentCount = r.countSoFar || (currentCount + 1);
-    refreshCounter();
-    returnScans.unshift({ imei: r.imei, warn: r.warning, message: r.message });
-    setStatus(r.warning ? 'warn' : 'ok', r.message);
-    renderReturnList();
-  } else if (r.duplicate) {
-    beep(500); setStatus('warn', r.message);
-  } else {
-    buzz(); setStatus('err', r.message);
-  }
+  scanInFlight = true;
+  try {
+    const r = await callApi('recordReturnedItem', [currentRequestId, text, currentRole]);
+    if (r.ok) {
+      beep(r.warning ? 600 : 900);
+      currentCount = r.countSoFar || (currentCount + 1);
+      refreshCounter();
+      returnScans.unshift({ imei: r.imei, warn: r.warning, message: r.message });
+      setStatus(r.warning ? 'warn' : 'ok', r.message);
+      renderReturnList();
+    } else if (r.duplicate) {
+      beep(500); setStatus('warn', r.message);
+    } else {
+      buzz(); setStatus('err', r.message);
+    }
+  } finally { scanInFlight = false; }
 }
 function renderReturnList() {
   const list = document.getElementById('list');
@@ -891,8 +903,11 @@ async function renderShipScan(requestId) {
 }
 async function onShipScan(text) {
   const now = Date.now();
-  if (text === lastScan && now - lastScanTime < 2000) return;
+  if (text === lastScan && now - lastScanTime < 3000) return;
+  if (scanInFlight) return;
   lastScan = text; lastScanTime = now;
+  scanInFlight = true;
+  try {
   const r = await callApi('recordShippedItem', [currentRequestId, text]);
   if (r.ok) {
     beep(r.warning ? 600 : 900);
@@ -906,6 +921,7 @@ async function onShipScan(text) {
   } else {
     buzz(); setStatus('err', r.message);
   }
+  } finally { scanInFlight = false; }
 }
 function renderShipList() {
   const list = document.getElementById('list');
@@ -950,8 +966,11 @@ function renderLookup() {
 }
 async function onLookupScan(text) {
   const now = Date.now();
-  if (text === lastScan && now - lastScanTime < 2000) return;
+  if (text === lastScan && now - lastScanTime < 3000) return;
+  if (scanInFlight) return;
   lastScan = text; lastScanTime = now;
+  scanInFlight = true;
+  try {
   beep(800);
   const r = await callApi('lookupImei', [text]);
   const card = document.getElementById('card');
@@ -984,6 +1003,7 @@ async function onLookupScan(text) {
   }
   html += '</div>';
   card.innerHTML = html;
+  } finally { scanInFlight = false; }
 }
 
 // ---------- Status helper ----------
