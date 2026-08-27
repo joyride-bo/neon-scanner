@@ -892,6 +892,12 @@ async function renderShipScan(requestId) {
     <div class="field"><label>6-pin cables qty</label>
       <input id="shipCab6pin" type="number" min="0" value="0" />
     </div>
+    <div class="field"><label>7-pin cables qty</label>
+      <input id="shipCab7pin" type="number" min="0" value="0" />
+    </div>
+    <div class="field"><label>Cable Sent Type</label>
+      <select id="shipCableSentType"><option value="">-- pick source --</option></select>
+    </div>
     <div class="footer-actions">
       <div class="row">
         <button class="secondary" onclick="undoLast()">Undo last</button>
@@ -900,6 +906,14 @@ async function renderShipScan(requestId) {
     </div>
   `;
   renderScannerBlock('scanArea', onShipScan);
+  // Populate Cable Sent Type dropdown from server (Cables tab sources).
+  callApi('getCableSources', []).then(sources => {
+    if (!sources || !Array.isArray(sources)) return;
+    const sel = document.getElementById('shipCableSentType');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">-- pick source --</option>' +
+      sources.map(s => '<option value="' + s + '">' + s + '</option>').join('');
+  });
 }
 async function onShipScan(text) {
   const now = Date.now();
@@ -949,7 +963,12 @@ async function finalize() {
   if (!confirm('Finalize ' + currentRequestId + '? This sets Qty Shipped + Date Shipped.')) return;
   const cab2pin = parseInt((document.getElementById('shipCab2pin') || {}).value, 10) || 0;
   const cab6pin = parseInt((document.getElementById('shipCab6pin') || {}).value, 10) || 0;
-  const r = await callApi('finalizeShipment', [currentRequestId, cab2pin, cab6pin]);
+  const cab7pin = parseInt((document.getElementById('shipCab7pin') || {}).value, 10) || 0;
+  const cableSentType = ((document.getElementById('shipCableSentType') || {}).value || '').trim();
+  if ((cab2pin > 0 || cab6pin > 0 || cab7pin > 0) && !cableSentType) {
+    if (!confirm('You entered cable quantities but no Cable Sent Type. Continue without a source?')) return;
+  }
+  const r = await callApi('finalizeShipment', [currentRequestId, cab2pin, cab6pin, cab7pin, cableSentType]);
   if (r.ok) {
     toast(r.message, 3000);
     setTimeout(() => navigate('home'), 1200);
