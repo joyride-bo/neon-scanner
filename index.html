@@ -288,7 +288,6 @@ let currentScanCallback = null;
 let currentRole = 'toronto';   // Only role used (Rob role retired)
 let expectedCount = 0;      // user-entered target before a scan session
 let currentCount = 0;       // running count for current scan session
-let reconCompany = '';      // company name when using the type-in shortcut
 let pendingFlow = '';       // 'receive' | 'ship' — what comes after precount
 
 function stopScanner() {
@@ -360,15 +359,6 @@ async function proceedAfterPrecount(extra) {
     return;
   }
   if (pendingFlow === 'ship') {
-    if (extra && extra.startsWith && extra.startsWith('__RECON__:')) {
-      // Company-name shortcut path — create a recon shipment first
-      const company = extra.slice('__RECON__:'.length);
-      const r = await callApi('createReconShipment', [company, expectedCount || null]);
-      if (!r.ok) { toast(r.message || 'Failed'); navigate('ship'); return; }
-      toast('Recon shipment ' + r.requestId);
-      navigate('shipScan', r.requestId);
-      return;
-    }
     navigate('shipScan', extra);
   }
 }
@@ -688,13 +678,6 @@ async function renderShipPicker() {
     </div>
     <button class="primary" onclick="goShip()">Start scanning</button>
 
-    <div class="or-strong">— or, type a company name —</div>
-    <div class="field">
-      <label>Company name (creates a "Needs Reconciliation" shipment)</label>
-      <input id="reconCompany" placeholder="e.g. Acme Co" autocomplete="off" />
-    </div>
-    <button class="primary" onclick="goShipRecon()">Use company name &amp; start scanning</button>
-
     ${createNewBtn ? '<div class="or-divider">— or —</div>' + createNewBtn : ''}
   `;
 }
@@ -702,11 +685,6 @@ function goShip() {
   const v = document.getElementById('reqPick').value;
   if (!v) { toast('Pick a Request ID'); return; }
   navigate('precount', 'ship', v);
-}
-function goShipRecon() {
-  const v = (document.getElementById('reconCompany').value || '').trim();
-  if (!v) { toast('Type a company name'); return; }
-  navigate('precount', 'ship', '__RECON__:' + v);
 }
 
 
