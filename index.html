@@ -231,6 +231,56 @@ async function callApi(action, args) {
   }
 }
 
+// ---------- Notification picker ----------
+// Runs an action with its email/Slack notifications held, then asks which
+// destinations to send to before continuing. Resolves with the action result.
+async function callWithNotify(action, args) {
+  const w = await callApi('runWithNotifyReview', [action, args || []]);
+  const r = (w && w.result !== undefined) ? w.result : w;
+  if (w && w.pendingToken && w.pending && w.pending.length) await reviewNotifications(w);
+  return r;
+}
+
+function reviewNotifications(w) {
+  return new Promise(resolve => {
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px';
+    const msgs = w.pending.map(p =>
+      '<details style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">' +
+      '<summary style="cursor:pointer;font-weight:600">' + esc(p.subject) + '</summary>' +
+      '<pre style="white-space:pre-wrap;font-size:12px;color:var(--muted);margin:8px 0 0">' + esc(p.body) + '</pre></details>').join('');
+    const boxes = (w.targets || []).map(t =>
+      '<label style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:15px">' +
+      '<input type="checkbox" value="' + esc(t.id) + '" checked style="width:20px;height:20px"> ' +
+      (t.kind === 'slack' ? '💬 ' : '✉️ ') + esc(t.label) + '</label>').join('');
+    ov.innerHTML =
+      '<div style="background:var(--panel);border:1px solid var(--border);border-radius:14px;max-width:480px;width:100%;max-height:90vh;overflow:auto;padding:16px">' +
+        '<h3 style="margin:0 0 4px">Send notification?</h3>' +
+        '<div style="color:var(--muted);font-size:13px;margin-bottom:10px">Already saved. Pick who gets told (tap a message to preview).</div>' +
+        msgs +
+        '<div id="npBoxes">' + boxes + '</div>' +
+        '<div class="row" style="margin-top:8px"><button class="secondary" data-q="all">Select all</button><button class="secondary" data-q="none">Select none</button></div>' +
+        '<div class="row"><button class="secondary" data-a="skip">Don\'t send</button><button class="primary" data-a="send">Send</button></div>' +
+        '<div id="npStatus" style="font-size:13px;color:var(--muted)"></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const boxEls = () => Array.from(ov.querySelectorAll('#npBoxes input'));
+    ov.querySelector('[data-q="all"]').onclick  = () => boxEls().forEach(b => b.checked = true);
+    ov.querySelector('[data-q="none"]').onclick = () => boxEls().forEach(b => b.checked = false);
+    const finish = async ids => {
+      ov.querySelectorAll('button').forEach(b => b.disabled = true);
+      ov.querySelector('#npStatus').textContent = ids.length ? 'Sending…' : 'Skipping…';
+      const res = await callApi('sendPendingNotifications', [w.pendingToken, ids]);
+      toast((res && res.message) || 'Done', 2000);
+      ov.remove();
+      resolve();
+    };
+    ov.querySelector('[data-a="send"]').onclick = () => finish(boxEls().filter(b => b.checked).map(b => b.value));
+    ov.querySelector('[data-a="skip"]').onclick = () => finish([]);
+  });
+}
+
 // ---------- Audio + haptic feedback ----------
 let audioCtx;
 function beep(freq=900, dur=80) {
@@ -946,7 +996,7 @@ async function finalize() {
   if ((cab2pin > 0 || cab6pin > 0 || cab7pin > 0) && !cableSentType) {
     if (!confirm('You entered cable quantities but no Cable Sent Type. Continue without a source?')) return;
   }
-  const r = await callApi('finalizeShipment', [currentRequestId, cab2pin, cab6pin, cab7pin, cableSentType]);
+  const r = await callWithNotify('finalizeShipment', [currentRequestId, cab2pin, cab6pin, cab7pin, cableSentType]);
   if (r.ok) {
     toast(r.message, 3000);
     setTimeout(() => navigate('home'), 1200);
@@ -1024,6 +1074,7 @@ let editDeviceImei = '';
 let editDeviceStatusOptions = [];
 let editDeviceCompanies = [];
 let editDeviceRequestIds = [];
+let editDeviceOriginalStatus = '';
 let cableTypes = [];   // loaded once, used by ship + new-shipment screens
 
 async function renderEditDevice() {
@@ -1069,8 +1120,13 @@ async function lookupEditImei(imei) {
   editDeviceImei = r.imei;
   setEdStatus('ok', 'Loaded row ' + r.rowIndex);
 
-  const statusOpts = '<option value="">--</option>' + editDeviceStatusOptions.map(o =>
-    '<option value="' + o + '"' + (o === r.status ? ' selected' : '') + '>' + o + '</option>').join('');
+  // Always include the device's current status, even if it isn't in the
+  // dropdown list — otherwise the select shows "--" and saving blanks it.
+  editDeviceOriginalStatus = String(r.status || '');
+  const statusList = editDeviceStatusOptions.slice();
+  if (editDeviceOriginalStatus && statusList.indexOf(editDeviceOriginalStatus) === -1) statusList.unshift(editDeviceOriginalStatus);
+  const statusOpts = '<option value="">--</option>' + statusList.map(o =>
+    '<option value="' + escapeAttr(o) + '"' + (o === editDeviceOriginalStatus ? ' selected' : '') + '>' + escapeHtml(o) + '</option>').join('');
 
   // Company options for the dropdown + datalist for typeahead
   const companyOpts = '<option value="">-- pick a company --</option>' +
@@ -1171,6 +1227,8 @@ async function saveEditDevice() {
       reason,
       companyCode,
       requestId,
+      // If you picked a Status yourself, the action won't override it.
+      keepStatus: updates.status !== '' && updates.status !== editDeviceOriginalStatus,
     }]);
     if (actRes.ok) {
       beep(900);
