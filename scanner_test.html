@@ -602,14 +602,23 @@ async function startLiveCamera() {
   }
 
   unlockAudio();
+  if (videoStream) { try { videoStream.getTracks().forEach(t => t.stop()); } catch (e) {} videoStream = null; }
+  // Ask for a sharp picture first; if the phone stalls or refuses, fall back to the plain request.
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+  const ask = c => withTimeout(navigator.mediaDevices.getUserMedia({ video: c, audio: false }), 8000);
+  let firstErr = null;
   try {
-    videoStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false,
-    });
-  } catch (e) {
-    showCamError('Camera denied or unavailable: ' + (e && e.message ? e.message : e));
-    return;
+    videoStream = await ask({ facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } });
+  } catch (e) { firstErr = e; }
+  if (!videoStream) {
+    if (status) status.textContent = 'Retrying camera…';
+    try { videoStream = await ask({ facingMode: { ideal: 'environment' } }); }
+    catch (e) {
+      const m = (e && (e.name || e.message)) || String(e);
+      showCamError('Camera didn\'t start (' + m + (firstErr ? '; first try: ' + ((firstErr.name || firstErr.message) || firstErr) : '') + '). ' +
+        'Close other tabs/apps using the camera (including the live scanner), then tap Try camera again.');
+      return;
+    }
   }
 
   const video = document.getElementById('video');
@@ -617,7 +626,7 @@ async function startLiveCamera() {
   video.srcObject = videoStream;
   video.style.display = 'block';
   document.getElementById('reticle').style.display = 'block';
-  try { await video.play(); } catch (e) {}
+  try { await Promise.race([video.play(), new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
 
   if (btn) btn.style.display = 'none';
   if (status) { status.className = 'status ok'; status.innerHTML = 'Camera live. Point at a QR code. <span class="count-pill" id="countPill">0 scanned</span>'; }
