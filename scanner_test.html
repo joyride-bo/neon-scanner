@@ -425,9 +425,10 @@ function renderPrecount(flow, extra) {
       <input id="expCount" type="number" min="1" inputmode="numeric" autofocus />
     </div>
     <button class="primary" id="precountGo">Start scanning</button>
-    <button class="secondary" style="margin-top:10px" onclick="skipPrecount(${JSON.stringify(extra||'')})">Skip — I don't know yet</button>
+    <button class="secondary" style="margin-top:10px" id="precountSkip">Skip — I don't know yet</button>
   `;
   document.getElementById('expCount').focus();
+  document.getElementById('precountSkip').onclick = () => skipPrecount(extra);
   document.getElementById('precountGo').onclick = () => {
     const n = parseInt(document.getElementById('expCount').value, 10);
     if (!n || n < 1) { toast('Enter a number'); return; }
