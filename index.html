@@ -138,6 +138,20 @@
   }
   .scan-list .item:last-child { border-bottom: none; }
   .scan-list .item .imei { flex: 1; }
+  .scan-list .item .st { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; font-size: 12px; text-align: right; }
+  .scan-list .item.pending .imei { color: var(--muted); font-style: italic; }
+  .scan-list .item.pending .st { color: var(--muted); }
+  .scan-list .item.saved .imei { color: var(--text); }
+  .scan-list .item.saved .st { color: var(--accent); font-weight: 700; }
+  .scan-list .item.warn .imei, .scan-list .item.dup .imei { color: var(--warn); }
+  .scan-list .item.warn .st, .scan-list .item.dup .st { color: var(--warn); }
+  .scan-list .item.err { background: rgba(208,78,58,0.12); }
+  .scan-list .item.err .imei, .scan-list .item.err .st { color: var(--error); }
+  .scan-list .item.undone .imei { color: var(--muted); text-decoration: line-through; }
+  .scan-list .item.undone .st { color: var(--muted); }
+  .scan-list .item .retry { width: auto; margin: 0 0 0 8px; padding: 4px 10px; font-size: 12px; background: var(--error); color: #fff; border: none; border-radius: 6px; }
+  .scanner-box .reticle.hit { border-color: #fff; border-width: 4px; }
+  .counter-banner .pending-note { font-size: 13px; margin-top: 4px; opacity: 0.95; min-height: 0; }
   .scan-list .empty { padding: 16px; color: var(--muted); text-align: center; font-size: 14px; }
   .count-pill {
     display: inline-block; background: var(--accent); color: white;
@@ -296,6 +310,32 @@ function beep(freq=900, dur=80) {
   } catch (e) {}
   if (navigator.vibrate) navigator.vibrate(40);
 }
+function _tone(freq, dur, type, gain, delay) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime + (delay || 0) / 1000;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = type || 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(gain || 0.18, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur / 1000);
+    o.start(t0); o.stop(t0 + dur / 1000 + 0.02);
+  } catch (e) {}
+}
+/** "Read" — the instant the camera sees a code. Short, high, with a tiny buzz. */
+function tick() { _tone(1600, 45, 'square', 0.08); if (navigator.vibrate) navigator.vibrate(25); }
+/** "Saved" — soft two-note ping, no vibration. */
+function ping() { _tone(988, 90, 'sine', 0.16); _tone(1319, 140, 'sine', 0.16, 85); }
+/** Get audio ready during a tap, so the first tick isn't late. */
+function unlockAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    _tone(1, 5, 'sine', 0.0001);
+  } catch (e) {}
+}
+document.addEventListener('pointerdown', unlockAudio, { once: true });
 function buzz() {
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -340,7 +380,9 @@ let expectedCount = 0;      // user-entered target before a scan session
 let currentCount = 0;       // running count for current scan session
 let pendingFlow = '';       // 'receive' | 'ship' — what comes after precount
 
+let scanLoopOn = false;
 function stopScanner() {
+  scanLoopOn = false;
   if (scanIntervalId) { clearInterval(scanIntervalId); scanIntervalId = null; }
   if (videoStream) {
     videoStream.getTracks().forEach(t => t.stop());
@@ -349,6 +391,7 @@ function stopScanner() {
 }
 
 function navigate(view, ...args) {
+  if (pendingCount()) toast(pendingCount() + ' scan(s) still saving in the background');
   stopScanner();
   backBtn.style.display = (view === 'home') ? 'none' : 'inline-block';
   if (view === 'home')        renderHome();
@@ -382,9 +425,10 @@ function renderPrecount(flow, extra) {
       <input id="expCount" type="number" min="1" inputmode="numeric" autofocus />
     </div>
     <button class="primary" id="precountGo">Start scanning</button>
-    <button class="secondary" style="margin-top:10px" onclick="skipPrecount(${JSON.stringify(extra||'')})">Skip — I don't know yet</button>
+    <button class="secondary" style="margin-top:10px" id="precountSkip">Skip — I don't know yet</button>
   `;
   document.getElementById('expCount').focus();
+  document.getElementById('precountSkip').onclick = () => skipPrecount(extra);
   document.getElementById('precountGo').onclick = () => {
     const n = parseInt(document.getElementById('expCount').value, 10);
     if (!n || n < 1) { toast('Enter a number'); return; }
@@ -428,6 +472,7 @@ function counterBannerHTML() {
   return `<div class="counter-banner ${cls}" id="bigCounter">
     <div class="count-num" id="bigCounterNum">${cur}${tgt > 0 ? ' / ' + tgt : ''}</div>
     <div class="count-label" id="bigCounterLabel">${label}</div>
+    <div class="pending-note" id="pendingNote"></div>
   </div>`;
 }
 function refreshCounter() {
@@ -556,14 +601,24 @@ async function startLiveCamera() {
     return;
   }
 
+  unlockAudio();
+  if (videoStream) { try { videoStream.getTracks().forEach(t => t.stop()); } catch (e) {} videoStream = null; }
+  // Ask for a sharp picture first; if the phone stalls or refuses, fall back to the plain request.
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+  const ask = c => withTimeout(navigator.mediaDevices.getUserMedia({ video: c, audio: false }), 8000);
+  let firstErr = null;
   try {
-    videoStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' } },
-      audio: false,
-    });
-  } catch (e) {
-    showCamError('Camera denied or unavailable: ' + (e && e.message ? e.message : e));
-    return;
+    videoStream = await ask({ facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } });
+  } catch (e) { firstErr = e; }
+  if (!videoStream) {
+    if (status) status.textContent = 'Retrying camera…';
+    try { videoStream = await ask({ facingMode: { ideal: 'environment' } }); }
+    catch (e) {
+      const m = (e && (e.name || e.message)) || String(e);
+      showCamError('Camera didn\'t start (' + m + (firstErr ? '; first try: ' + ((firstErr.name || firstErr.message) || firstErr) : '') + '). ' +
+        'Close other tabs/apps using the camera (including the live scanner), then tap Try camera again.');
+      return;
+    }
   }
 
   const video = document.getElementById('video');
@@ -571,20 +626,37 @@ async function startLiveCamera() {
   video.srcObject = videoStream;
   video.style.display = 'block';
   document.getElementById('reticle').style.display = 'block';
-  try { await video.play(); } catch (e) {}
+  try { await Promise.race([video.play(), new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
 
   if (btn) btn.style.display = 'none';
   if (status) { status.className = 'status ok'; status.innerHTML = 'Camera live. Point at a QR code. <span class="count-pill" id="countPill">0 scanned</span>'; }
 
-  scanIntervalId = setInterval(async () => {
-    try {
-      const codes = await detector.detect(video);
-      if (codes && codes.length) {
-        const text = codes[0].rawValue;
-        if (text && currentScanCallback) currentScanCallback(text);
-      }
-    } catch (e) {}
-  }, 250);
+  // Continuous autofocus where the phone supports it (ignored elsewhere)
+  try {
+    const track = videoStream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+  } catch (e) {}
+
+  // Look at frames continuously (one at a time, ~every 60 ms) instead of 4×/second
+  scanLoopOn = true;
+  let busy = false, last = 0;
+  const loop = async (now) => {
+    if (!scanLoopOn) return;
+    if (!busy && now - last >= 60 && video.readyState >= 2) {
+      busy = true; last = now;
+      try {
+        const codes = await detector.detect(video);
+        if (codes && codes.length) {
+          const text = codes[0].rawValue;
+          if (text && currentScanCallback) currentScanCallback(text);
+        }
+      } catch (e) {}
+      busy = false;
+    }
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
 }
 
 function showCamError(msg) {
@@ -626,6 +698,104 @@ async function handlePhotoFile(file) {
   if (el) el.value = '';
 }
 
+// ---------- READ-NOW / SAVE-IN-ORDER QUEUE (Receive, Ship, Receive Return) ----------
+// A code is shown + ticks the moment it's read. Saving happens one at a time in the
+// background, in scan order. Grey = saving · white ✓ = saved · amber = duplicate/warning
+// · red ✗ = NOT saved (tap Retry).
+let scanRows = [];          // newest first: { key, raw, imei, state, note }
+let scanQueue = [];
+let queueBusy = false;
+let saveFn = null;          // raw -> Promise<server result>
+let onSavedFn = null;       // (result) -> update counter
+const recentSeen = {};      // key -> last time the camera saw it
+
+function startQueuedFlow(save, onSaved) {
+  scanRows = []; scanQueue = []; saveFn = save; onSavedFn = onSaved;
+  Object.keys(recentSeen).forEach(k => delete recentSeen[k]);
+  renderScanRows();
+}
+function _imeiOf(raw) { const m = String(raw).match(/\d{15}/); return m ? m[0] : String(raw).trim(); }
+function pendingCount() { return scanRows.filter(r => r.state === 'pending').length; }
+function errorCount() { return scanRows.filter(r => r.state === 'err').length; }
+
+function queuedCapture(raw) {
+  const text = String(raw || '').trim(); if (!text) return;
+  const key = _imeiOf(text), now = Date.now();
+  const seenAt = recentSeen[key]; recentSeen[key] = now;
+  if (seenAt && now - seenAt < 4000) return;                 // still in front of the camera
+  const existing = scanRows.find(r => r.key === key && r.state !== 'undone');
+  if (existing) {
+    if (existing.state === 'pending') return;                 // already saving
+    if (existing.state === 'err') { retryRow(key); return; }  // re-scan of a failed one = retry
+    beep(500); toast('Already scanned: ' + key); return;     // saved / duplicate already
+  }
+  tick(); flashReticle();
+  scanRows.unshift({ key: key, raw: text, imei: key, state: 'pending', note: 'saving…' });
+  renderScanRows();
+  scanQueue.push(key);
+  runQueue();
+}
+function retryRow(key) {
+  const r = scanRows.find(x => x.key === key && x.state === 'err'); if (!r) return;
+  tick(); r.state = 'pending'; r.note = 'saving…'; renderScanRows();
+  scanQueue.push(key); runQueue();
+}
+async function runQueue() {
+  if (queueBusy) return;
+  queueBusy = true;
+  try {
+    while (scanQueue.length) {
+      const key = scanQueue.shift();
+      const row = scanRows.find(r => r.key === key && r.state === 'pending');
+      if (!row || !saveFn) continue;
+      let r;
+      try { r = await saveFn(row.raw); }
+      catch (e) { r = { ok: false, message: 'No connection — tap Retry' }; }
+      if (!r || typeof r !== 'object') r = { ok: false, message: 'No response — tap Retry' };
+      if (r.ok) {
+        row.imei = r.imei || row.imei;
+        if (r.warning) { row.state = 'warn'; row.note = r.message || 'saved, check'; beep(600); }
+        else { row.state = 'saved'; row.note = r.action === 'location-updated' ? '✓ location updated' : '✓'; ping(); }
+        if (onSavedFn) onSavedFn(r);
+        setStatus(r.warning ? 'warn' : 'ok', r.message || ('Saved ' + row.imei));
+      } else if (r.duplicate) {
+        row.state = 'dup'; row.note = 'duplicate'; beep(500); setStatus('warn', r.message || 'Duplicate');
+      } else {
+        row.state = 'err'; row.note = '✗ ' + (r.message || 'not saved'); buzz(); setStatus('err', row.imei + ': ' + (r.message || 'not saved'));
+      }
+      renderScanRows();
+    }
+  } finally { queueBusy = false; }
+}
+function renderScanRows() {
+  const p = pendingCount(), e = errorCount();
+  const pn = document.getElementById('pendingNote');
+  if (pn) pn.textContent = (p ? '⏳ ' + p + ' saving…' : '') + (p && e ? '  ·  ' : '') + (e ? '⚠ ' + e + ' not saved' : '');
+  const list = document.getElementById('list');
+  if (!list) return;
+  if (!scanRows.length) { list.innerHTML = '<div class="empty">No scans yet.</div>'; return; }
+  list.innerHTML = scanRows.slice(0, 200).map(r =>
+    '<div class="item ' + r.state + '"><span class="imei">' + r.imei + '</span><span class="st">' + escHtml(r.note || '') + '</span>' +
+    (r.state === 'err' ? '<button class="retry" data-retry="' + r.key + '">Retry</button>' : '') + '</div>').join('');
+  list.querySelectorAll('[data-retry]').forEach(b => { b.onclick = () => retryRow(b.dataset.retry); });
+}
+function escHtml(x) { return String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function flashReticle() {
+  const r = document.getElementById('reticle'); if (!r) return;
+  r.classList.add('hit'); clearTimeout(r._t); r._t = setTimeout(() => r.classList.remove('hit'), 220);
+}
+/** Undo / Finalize must wait for saves to finish. */
+function savesSettled(action) {
+  const p = pendingCount();
+  if (p) { toast('Still saving ' + p + ' scan(s) — one sec, then ' + action + ' again.'); return false; }
+  return true;
+}
+function markLastSavedUndone() {
+  const r = scanRows.find(x => x.state === 'saved' || x.state === 'warn');
+  if (r) { r.state = 'undone'; r.note = 'undone'; }
+  renderScanRows();
+}
+
 // ---------- RECEIVE ----------
 const recentReceives = [];
 
@@ -663,7 +833,10 @@ function renderReceiveScan() {
     </div>
   `;
   recentReceives.length = 0;
-  renderScannerBlock('scanArea', onReceiveScan);
+  startQueuedFlow(
+    raw => callApi('recordReceived', [(window._torontoBatch || ''), raw, currentRole]),
+    r => { currentCount += 1; refreshCounter(); });
+  renderScannerBlock('scanArea', queuedCapture);
 }
 
 async function onReceiveScan(text) {
@@ -798,7 +971,10 @@ async function renderReceiveReturnScan(requestId) {
       </div>
     </div>
   `;
-  renderScannerBlock('scanArea', onReceiveReturnScan);
+  startQueuedFlow(
+    raw => callApi('recordReturnedItem', [currentRequestId, raw, currentRole]),
+    r => { currentCount = r.countSoFar || (currentCount + 1); refreshCounter(); });
+  renderScannerBlock('scanArea', queuedCapture);
 }
 
 async function onReceiveReturnScan(text) {
@@ -834,18 +1010,20 @@ function renderReturnList() {
   `).join('');
 }
 async function undoLastReturnScan() {
+  if (!savesSettled('undo')) return;
   const r = await callApi('undoLastScan', [currentRequestId]);
   if (r.ok) {
     toast(r.message);
-    if (returnScans.length) returnScans.shift();
     currentCount = Math.max(0, currentCount - 1);
     refreshCounter();
-    renderReturnList();
+    markLastSavedUndone();
   } else {
     toast(r.message);
   }
 }
 async function finalizeReturn() {
+  if (!savesSettled('finalize')) return;
+  if (errorCount() && !confirm(errorCount() + ' scan(s) were NOT saved (red). Finalize anyway?')) return;
   if (!confirm('Finalize return ' + currentRequestId + '? This sets Qty Shipped to -' + currentCount + ' and closes the Return Request.')) return;
   const r = await callApi('finalizeReturn', [currentRequestId]);
   if (r.ok) {
@@ -933,7 +1111,10 @@ async function renderShipScan(requestId) {
       </div>
     </div>
   `;
-  renderScannerBlock('scanArea', onShipScan);
+  startQueuedFlow(
+    raw => callApi('recordShippedItem', [currentRequestId, raw]),
+    r => { currentCount = r.countSoFar || (currentCount + 1); refreshCounter(); });
+  renderScannerBlock('scanArea', queuedCapture);
   // Populate Cable Sent Type dropdown from server (Cables tab sources).
   callApi('getCableSources', []).then(sources => {
     if (!sources || !Array.isArray(sources)) return;
@@ -976,18 +1157,20 @@ function renderShipList() {
   `).join('');
 }
 async function undoLast() {
+  if (!savesSettled('undo')) return;
   const r = await callApi('undoLastScan', [currentRequestId]);
   if (r.ok) {
     toast(r.message);
-    if (shipScans.length) shipScans.shift();
     currentCount = Math.max(0, currentCount - 1);
     refreshCounter();
-    renderShipList();
+    markLastSavedUndone();
   } else {
     toast(r.message);
   }
 }
 async function finalize() {
+  if (!savesSettled('finalize')) return;
+  if (errorCount() && !confirm(errorCount() + ' scan(s) were NOT saved (red). Finalize anyway?')) return;
   if (!confirm('Finalize ' + currentRequestId + '? This sets Qty Shipped + Date Shipped.')) return;
   const cab2pin = parseInt((document.getElementById('shipCab2pin') || {}).value, 10) || 0;
   const cab6pin = parseInt((document.getElementById('shipCab6pin') || {}).value, 10) || 0;
